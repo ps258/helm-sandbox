@@ -5,6 +5,8 @@ REDIS_YAML=$(mktemp /tmp/redis.yaml.XXXX)
 MONGO_YAML=$(mktemp /tmp/mongo.yaml.XXXX)
 TYK_YAML=$(mktemp /tmp/tyk-pro.yaml.XXXX)
 
+trap 'rm -f $REDIS_YAML $MONGO_YAML $TYK_YAML' 0 1 2 3 15
+
 if ! kubectl create namespace $NAMESPACE; then
   echo "[FATAL]Namespace $NAMESPACE already exists"
   exit 1
@@ -16,7 +18,7 @@ helm show values bitnami/redis > $REDIS_YAML
 yq '.auth.enabled = false' -i $REDIS_YAML
 yq '.image.tag = "6.0.10"' -i $REDIS_YAML
 yq '.architecture = "standalone"' -i $REDIS_YAML
-helm install tyk-redis bitnami/redis -f ./$REDIS_YAML -n $NAMESPACE
+helm install tyk-redis bitnami/redis -f $REDIS_YAML -n $NAMESPACE --wait
 
 # install mongodb
 #helm install mongo tyk-helm/simple-mongodb -n $NAMESPACE
@@ -24,9 +26,11 @@ helm show values bitnami/mongodb > $MONGO_YAML
 yq '.auth.enabled = false' -i $MONGO_YAML
 yq '.image.tag = "4.4"' -i $MONGO_YAML
 yq '.architecture = "standalone"' -i $MONGO_YAML
+yq '.livenessProbe.enabled = false' -i $MONGO_YAML
+yq '.readinessProbe.enabled = false' -i $MONGO_YAML
 # the bitnami chart adds -mongodb to the name so we'll just call it 'tyk' here and then connect using 'tyk-mongodb'
 # it takes a while to start so we wait here
-helm install tyk bitnami/mongodb -f ./$MONGO_YAML -n $NAMESPACE --wait
+helm install tyk bitnami/mongodb -f $MONGO_YAML -n $NAMESPACE --wait
 
 helm show values tyk-helm/tyk-pro > $TYK_YAML
 # update $TYK_YAML
@@ -59,15 +63,10 @@ yq '.gateway.kind = "Deployment"' -i $TYK_YAML
 # things operator needs
 yq '.gateway.extraEnvs += { "name": "TYK_GW_POLICIES_ALLOWEXPLICITPOLICYID", "value": "true" }' -i $TYK_YAML
 
-helm install tyk-pro tyk-helm/tyk-pro -f ./$TYK_YAML -n $NAMESPACE --wait
+helm install tyk-pro tyk-helm/tyk-pro -f $TYK_YAML -n $NAMESPACE --wait
 
-# ip is in
-minikube ip
 # dashboard port is
 echo Dashboard URL http://$(minikube ip):$(kubectl get --namespace $NAMESPACE -o jsonpath="{.spec.ports[0]}" services dashboard-svc-tyk-pro | jq .nodePort)
 
 # gateway port is
 echo Gateway URL http://$(minikube ip):$(kubectl get --namespace $NAMESPACE -o jsonpath="{.spec.ports[0]}" services gateway-svc-tyk-pro | jq .nodePort)
-
-#Dashboard URL http://192.168.49.2:31062
-#Gateway URL http://192.168.49.2:32550
