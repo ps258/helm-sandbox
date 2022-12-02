@@ -6,6 +6,8 @@ REDIS_YAML=$(mktemp /tmp/redis.yaml.XXXX)
 MONGO_YAML=$(mktemp /tmp/mongo.yaml.XXXX)
 TYK_YAML=$(mktemp /tmp/tyk-pro.yaml.XXXX)
 IP=$(minikube ip)
+NAMESPACE_SELECTOR="creator=hsbctl"
+
 
 SCRIPTNAME=$0
 SCRIPTDIR=$(
@@ -75,8 +77,8 @@ function createNamespace {
 	if ! namespaceExists $NAMESPACE; then
 		echo "[INFO]kubectl create ns $NAMESPACE"
 		kubectl create ns $NAMESPACE
-		#echo "[INFO]kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR"
-		#kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR
+		echo "[INFO]kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR"
+		kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR
 		# setup config map in the new namespace with the details of the deployment
 		echo "apiVersion: v1" > $configYAML
 		echo "data:" >> $configYAML
@@ -204,7 +206,7 @@ function getGatewayPort {
 }
 
 function getDescription {
-  kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_DESCRIPTION
+	kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_DESCRIPTION
 }
 
 function reportSanboxInfo {
@@ -261,6 +263,15 @@ if [[ $# -gt 0 ]]; then
 				exit 1
 			fi
 			;;
+		delete | rm | del)
+			shift
+			if [[ $# -lt 1 ]]; then
+				echo "[FATAL]Must provide namespace"
+				exit 1
+			fi
+			echo "[INFO]kubectl delete namespace $*"
+			kubectl delete namespace $* --wait
+			;;
 		info)
 			shift
 			NAMESPACE=$1
@@ -272,14 +283,13 @@ if [[ $# -gt 0 ]]; then
 				exit 1
 			fi
 			;;
+		list)
+			shift
+			echo "[INFO]kubectl get namespaces --selector=$NAMESPACE_SELECTOR"
+			kubectl get namespaces --selector=$NAMESPACE_SELECTOR
+			;;
 		*)
 			echo "[FATAL]Command '$arg' not implemented"
 			;;
 	esac
 fi
-
-# dashboard port is
-#echo Dashboard URL http://$IP:$(getDashboardPort)
-
-# gateway port is
-#echo Gateway URL http://$IP:$(getGatewayPort)
