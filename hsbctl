@@ -1,22 +1,133 @@
 #!/bin/bash
 
-NAMESPACE="${1:-tyk}"
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:$PATH
+
 REDIS_YAML=$(mktemp /tmp/redis.yaml.XXXX)
 MONGO_YAML=$(mktemp /tmp/mongo.yaml.XXXX)
 TYK_YAML=$(mktemp /tmp/tyk-pro.yaml.XXXX)
 IP=$(minikube ip)
+
+SCRIPTNAME=$0
+SCRIPTDIR=$(
+	cd "$(dirname $SCRIPTNAME)"
+	echo $PWD
+)
+VERSIONFILE="$SCRIPTDIR/tyk-versions.list"
 
 trap 'rm -f $REDIS_YAML $MONGO_YAML $TYK_YAML' 0 1 2 3 15
 
 if [[ -f ~/.tyk-sandbox ]]; then
 	. ~/.tyk-sandbox
 	HSBX_BOOTSTRAP=true
+else
+	SBX_LICENSE=""
+	SBX_USER=""
+	SBX_PASSWORD=""
+	HSBX_BOOTSTRAP=false
 fi
 
-if ! kubectl create namespace $NAMESPACE; then
-  echo "[FATAL]Namespace $NAMESPACE already exists"
-  exit 1
-fi
+function help {
+	typeset name
+	name=$(basename $SCRIPTNAME)
+	echo "[USAGE]:"
+	echo "$name create -v <tyk version> -t <namespace>"
+	echo "      Create a tyk instance the name space given as a tag"
+	echo "      -p deploy with postgres not mongo"
+	echo "      -s deploy a stand alone gateway"
+	echo "$name delete <namespace>"
+	echo "      Delete the namespace given as a tag and all resources in it"
+	echo "$name list"
+	echo "      List all namespaces"
+	echo "$name logs <namespace> <podname>"
+	echo "      Tail the logs of the named pod"
+	echo "$name info <namespace>"
+	echo "      Print info on the particular instance"
+	echo "$name shell <namespace> <pod>"
+	echo "      Start an interactive shell in the pod."
+	echo "      The pod name can be a substring of the actual name"
+	echo "      eg. $name shell ns1 dashboard"
+}
+
+# isolated to keep IFS from leaking
+function loadVersions {
+	typeset line
+	typeset gwVers
+	typeset dshbVers
+	typeset pumpVers
+	typeset TIBvers
+	typeset syncVers
+	typeset version
+	line=$1
+	version=$(echo $line | awk -F, '{print $1}')
+	gwVers=$(echo $line | awk -F, '{print $2}')
+	dshbVers=$(echo $line | awk -F, '{print $3}')
+	pumpVers=$(echo $line | awk -F, '{print $4}')
+	TIBvers=$(echo $line | awk -F, '{print $5}')
+	syncVers=$(echo $line | awk -F, '{print $6}')
+	export HSBX_GATE_VERS="v${gwVers%%-*}"
+	export HSBX_DASH_VERS="v${dshbVers%%-*}"
+	export HSBX_PUMP_VERS="v${pumpVers%%-*}"
+}
+
+function createNamespace {
+	typeset configYAML=$(mktemp /tmp/configYAML.yaml.XXXX)
+	configYAML=$(mktemp /tmp/configYAML.yaml.XXXX)
+	if ! namespaceExists $NAMESPACE; then
+		echo "[INFO]kubectl create ns $NAMESPACE"
+		kubectl create ns $NAMESPACE
+		#echo "[INFO]kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR"
+		#kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR
+		# setup config map in the new namespace with the details of the deployment
+		echo "apiVersion: v1" > $configYAML
+		echo "data:" >> $configYAML
+		if [[ -n $sandboxVersion ]]; then
+			echo "  HSBX_VERSION: $sandboxVersion" >> $configYAML
+		fi
+		if [[ -n $HSBX_GATE_VERS ]]; then
+			echo "  HSBX_GW: $HSBX_GATE_VERS" >> $configYAML
+		fi
+		if [[ -n $HSBX_DASH_VERS ]]; then
+			echo "  HSBX_DB: $HSBX_DASH_VERS" >> $configYAML
+		fi
+		if [[ -n $HSBX_PUMP_VERS ]]; then
+			echo "  HSBX_PMP: $HSBX_PUMP_VERS" >> $configYAML
+		fi
+		if [[ -n $HSBX_MDCB_VERS ]]; then
+			echo "  HSBX_MDCB: $HSBX_MDCB_VERS" >> $configYAML
+		fi
+		echo "  HSBX_DESCRIPTION: $HSBX_DESCRIPTION" >> $configYAML
+		echo "kind: ConfigMap" >> $configYAML
+		echo "metadata:" >> $configYAML
+		echo "  namespace: \"$NAMESPACE\"" >> $configYAML
+		echo "  name: sandbox-details" >> $configYAML
+		kubectl apply -f $configYAML -n $NAMESPACE
+		echo "[INFO]Created namespace '$NAMESPACE'"
+	fi
+	rm -f $configYAML
+}
+
+function namespaceExists {
+	kubectl get namespaces --no-headers=true | grep -wq $NAMESPACE
+	return $?
+}
+
+# find the next namespace index that's unused
+function nextFreeNamespace {
+	typeset existing
+	typeset i
+	existing=$(kubectl get namespaces --selector=$NAMESPACE_SELECTOR --no-headers=true | awk '{print $1}')
+	for i in $(seq 1 1000); do
+		test="hsandbox-$i"
+		if ! echo $existing | grep -qw $test; then
+			echo $i
+			break
+		fi
+	done
+}
+
+function listPods {
+	kubectl get pods -n $NAMESPACE
+}
 
 function deployRedis {
 	echo "[INFO]Deploying redis"
@@ -48,9 +159,9 @@ function deployMongodb {
 function deployPro {
 	echo "[INFO]Deploying dashboard, gateway and pump"
 	helm show values tyk-helm/tyk-pro > $TYK_YAML
-	yq '.dash.image.tag = "v4.2.4"' -i $TYK_YAML
-	yq '.gateway.image.tag = "v4.2.4"' -i $TYK_YAML
-	yq '.pump.image.tag = "v1.6.0"' -i $TYK_YAML
+	yq '.dash.image.tag = "'$HSBX_DASH_VERS'"' -i $TYK_YAML
+	yq '.gateway.image.tag = "'$HSBX_GATE_VERS'"' -i $TYK_YAML
+	yq '.pump.image.tag = "'$HSBX_PUMP_VERS'"' -i $TYK_YAML
 
 	# setup redis and mongo connections in tyk's yaml
 	yq '.redis.addrs = "tyk-redis-master.'$NAMESPACE'.svc.cluster.local:6379"' -i $TYK_YAML
@@ -92,12 +203,83 @@ function getGatewayPort {
 	kubectl get --namespace $NAMESPACE -o jsonpath="{.spec.ports[0]}" services gateway-svc-tyk-pro | jq -r .nodePort
 }
 
-deployRedis
-deployMongodb
-deployPro
+function getDescription {
+  kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_DESCRIPTION
+}
+
+function reportSanboxInfo {
+	echo "$NAMESPACE.Description:       $(getDescription)"
+	echo "$NAMESPACE.dashboard:         http://$IP:$(getDashboardPort)/"
+	echo "$NAMESPACE.control-gateway:   http://$IP:$(getGatewayPort)/"
+}
+
+# process commands
+if [[ $# -gt 0 ]]; then
+	case $1 in 
+		create)
+			shift
+			while getopts v:t: arg; do
+				case $arg in
+					t)
+						HSBX_DESCRIPTION="$OPTARG"
+						;;
+					v)
+						sandboxVersion=$OPTARG
+						;;
+					:)
+						echo "[FATAL]Option -$OPTARG requires an arguement."
+						exit 1
+						;;
+					\?)
+						echo "[FATAL]Invalid option: -$OPTARG"
+						exit 1
+						;;
+				esac
+			done
+			NAMESPACE=hsandbox-$(nextFreeNamespace)
+			if [[ -z $HSBX_DESCRIPTION || -z $sandboxVersion ]]; then
+				echo "[FATAL]Both -v and -t must be set"
+				help
+				exit 1
+			fi
+			if ! namespaceExists $NAMESPACE; then
+				if egrep -q "^$sandboxVersion," $VERSIONFILE; then
+					loadVersions $(grep -e "^$sandboxVersion," $VERSIONFILE | head -1)
+					echo "[INFO]Using Gateway $HSBX_GATE_VERS, Dashboard $HSBX_DASH_VERS, Pump $HSBX_PUMP_VERS"
+				else
+					echo "[FATAL]Unable to find '$sandboxVersion' in '$VERSIONFILE'"
+					exit 1
+				fi
+				createNamespace
+				deployRedis
+				deployMongodb
+				deployPro
+				listPods
+				reportSanboxInfo 
+			else
+				echo "[FATAL]Namespace $NAMESPACE already exists"
+				exit 1
+			fi
+			;;
+		info)
+			shift
+			NAMESPACE=$1
+			if namespaceExists $NAMESPACE; then
+				listPods
+				reportSanboxInfo
+			else
+				echo "[FATAL]Namespace '$NAMESPACE' does not exist"
+				exit 1
+			fi
+			;;
+		*)
+			echo "[FATAL]Command '$arg' not implemented"
+			;;
+	esac
+fi
 
 # dashboard port is
-echo Dashboard URL http://$IP:$(getDashboardPort)
+#echo Dashboard URL http://$IP:$(getDashboardPort)
 
 # gateway port is
-echo Gateway URL http://$IP:$(getGatewayPort)
+#echo Gateway URL http://$IP:$(getGatewayPort)
