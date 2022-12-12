@@ -292,4 +292,7 @@ if [[ $# -gt 0 ]]; then
 			echo "[FATAL]Command '$arg' not implemented"
 			;;
 	esac
+else
+	help
+	exit 1
 fi
