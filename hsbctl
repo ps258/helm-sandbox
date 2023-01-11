@@ -7,6 +7,8 @@ MONGO_YAML=$(mktemp /tmp/mongo.yaml.XXXX)
 TYK_YAML=$(mktemp /tmp/tyk-pro.yaml.XXXX)
 IP=$(minikube ip)
 NAMESPACE_SELECTOR="creator=hsbctl"
+EXTRA_NAMESPACE_LABELS=''
+ISTIO_INJECTION_LABEL='istio-injection=enabled'
 
 
 SCRIPTNAME=$0
@@ -32,8 +34,9 @@ function help {
 	typeset name
 	name=$(basename $SCRIPTNAME)
 	echo "[USAGE]:"
-	echo "$name create -v <tyk version> -t <namespace>"
+	echo "$name create -v <tyk version> -t <namespace description> [-p|-s] -i"
 	echo "      Create a tyk instance the name space given as a tag"
+	echo "      -i add the istio label to the namespace so istio is injected into the pods"
 	echo "      -p deploy with postgres not mongo"
 	echo "      -s deploy a stand alone gateway"
 	echo "$name delete <namespace>"
@@ -77,8 +80,8 @@ function createNamespace {
 	if ! namespaceExists $NAMESPACE; then
 		echo "[INFO]kubectl create ns $NAMESPACE"
 		kubectl create ns $NAMESPACE
-		echo "[INFO]kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR"
-		kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR
+		echo "[INFO]kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR $EXTRA_NAMESPACE_LABEL"
+		kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR $EXTRA_NAMESPACE_LABEL
 		# setup config map in the new namespace with the details of the deployment
 		echo "apiVersion: v1" > $configYAML
 		echo "data:" >> $configYAML
@@ -111,6 +114,28 @@ function createNamespace {
 function namespaceExists {
 	kubectl get namespaces --no-headers=true | grep -wq $NAMESPACE
 	return $?
+}
+
+function runShell {
+	typeset podType
+	typeset pod
+	for podType in $*
+	do
+		echo "[INFO]Creating shell for $podType"
+		for pod in $(kubectl get pods -n $NAMESPACE | awk '/'$podType'/ {print $1}')
+		do
+			# if ncurses-base isnt installed then TERM isn't recognised
+			# I found it was installed in some images but not others
+			echo "[INFO]Checking for ncurses-base in $pod"
+			if ! kubectl exec $pod -n $NAMESPACE -- test -d /lib/terminfo >/dev/null 2>&1; then
+				echo "[INFO]Installing ncurses-base to provide terminal types to the shell"
+				kubectl exec $pod -n $NAMESPACE -- apt install ncurses-base -y > /dev/null 2>&1
+			fi
+			echo "[INFO]starting bash in $pod"
+			echo "[INFO]kubectl exec $pod -n $NAMESPACE -it -- /bin/bash"
+			kubectl exec $pod -n $NAMESPACE -it -- /bin/bash
+		done
+	done
 }
 
 # find the next namespace index that's unused
@@ -209,10 +234,80 @@ function getDescription {
 	kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_DESCRIPTION
 }
 
+function getAdminUserKey {
+	# looks up admin user key from the adminuserkey config map if it exists or creates it if it doesn't
+	typeset adminuserkey
+	if kubectl get configmap -n $NAMESPACE adminuserkey > /dev/null 2>&1; then
+		# retrieve the admin user key from the config map and return them
+		adminuserkey=$(kubectl get configmap -n $NAMESPACE adminuserkey --no-headers=true -o json | jq -r .data.adminuserkey)
+	else
+		# get the admin user key from the dashboard logs, store it for next time and return it
+		typeset dashboardPod
+		typeset configmapYAML
+		configmapYAML=$(mktemp /tmp/configmapYAML.yaml.XXXX)
+		dashboardPod=$(kubectl get pods -n $NAMESPACE | awk '/dashboard-tyk-pro/ {print $1}' | head -1)
+		adminuserkey=$(kubectl logs $dashboardPod -n $NAMESPACE | awk '/Setting key=/ && !/key=[[:xdigit:]]+-/ {print $NF; exit}'| cut -d= -f2 | tr -d '"')
+		if [[ -n $adminuserkey ]]; then
+			echo "apiVersion: v1" > $configmapYAML
+			echo "data:" >> $configmapYAML
+			echo "  adminuserkey: $adminuserkey" >> $configmapYAML
+			echo "kind: ConfigMap" >> $configmapYAML
+			echo "metadata:" >> $configmapYAML
+			echo "  namespace: \"$NAMESPACE\"" >> $configmapYAML
+			echo "  name: adminuserkey" >> $configmapYAML
+			kubectl apply -f $configmapYAML -n $NAMESPACE > /dev/null 2>&1
+		else
+			echo "Unknown"
+			return
+		fi
+	fi
+	echo $adminuserkey
+}
+
+function getOrgID {
+	# looks up orgid from the orgid config map if it exists or creates it if it doesn't
+	typeset orgid
+	if kubectl get configmap -n $NAMESPACE orgid > /dev/null 2>&1; then
+		# retrieve the org id from the config map and return them
+		orgid=$(kubectl get configmap -n $NAMESPACE orgid --no-headers=true -o json | jq -r .data.orgid)
+	else
+		# get the admin user key from the dashboard logs, store it for next time and return it
+		typeset dashboardPod
+		typeset configmapYAML
+		configmapYAML=$(mktemp /tmp/configmapYAML.yaml.XXXX)
+		dashboardPod=$(kubectl get pods -n $NAMESPACE | awk '/dashboard-tyk-pro/ {print $1; exit}')
+		orgid=$(kubectl logs $dashboardPod -n $NAMESPACE | awk '/Default Org/ {print $5; exit}' | cut -d\{ -f 2)
+		if [[ -n $orgid ]]; then
+			echo "apiVersion: v1" > $configmapYAML
+			echo "data:" >> $configmapYAML
+			echo "  orgid: $orgid" >> $configmapYAML
+			echo "kind: ConfigMap" >> $configmapYAML
+			echo "metadata:" >> $configmapYAML
+			echo "  namespace: \"$NAMESPACE\"" >> $configmapYAML
+			echo "  name: orgid" >> $configmapYAML
+			kubectl apply -f $configmapYAML -n $NAMESPACE > /dev/null 2>&1
+		else
+			echo "Unknown"
+			return
+		fi
+	fi
+	echo $orgid
+}
+
+# can't get redis, mongo, postres info because they're not exposed with help charts
+# also can't get orgid and admin key details because redis isn't exposed
 function reportSanboxInfo {
 	echo "$NAMESPACE.Description:       $(getDescription)"
 	echo "$NAMESPACE.dashboard:         http://$IP:$(getDashboardPort)/"
 	echo "$NAMESPACE.control-gateway:   http://$IP:$(getGatewayPort)/"
+	echo "$NAMESPACE.AdminKey:          $(getAdminUserKey)"
+	echo "$NAMESPACE.OrgID:             $(getOrgID)"
+	# if the namespace has the label 'istio-injection=enabled' then report the istio-system services
+	if kubectl get ns --show-labels --no-headers=true $NAMESPACE | grep -q $ISTIO_INJECTION_LABEL; then
+		echo "Kiali:                        http://$IP:$(kubectl get svc -n istio-system kiali --no-headers=true | awk -F '[:/ ]+' '{print $6}')/"
+		echo "Grafana:                      http://$IP:$(kubectl get svc -n istio-system grafana --no-headers=true | awk -F '[:/ ]+' '{print $6}')/"
+		echo "Tracing:                      http://$IP:$(kubectl get svc -n istio-system tracing --no-headers=true | awk -F '[:/ ]+' '{print $6}')/"
+	fi
 }
 
 # process commands
@@ -222,6 +317,10 @@ if [[ $# -gt 0 ]]; then
 			shift
 			while getopts v:t: arg; do
 				case $arg in
+					i)
+						# add the istio label to the namespace so it's picked up by istio
+						EXTRA_NAMESPACE_LABELS="$ISTIO_INJECTION_LABEL $EXTRA_NAMESPACE_LABELS"
+						;;
 					t)
 						HSBX_DESCRIPTION="$OPTARG"
 						;;
@@ -269,11 +368,20 @@ if [[ $# -gt 0 ]]; then
 				echo "[FATAL]Must provide namespace"
 				exit 1
 			fi
-			echo "[INFO]kubectl delete namespace $*"
-			kubectl delete namespace $* --wait
+			if namespaceExists $NAMESPACE; then
+				echo "[INFO]kubectl delete namespace $*"
+				kubectl delete namespace $* --wait
+			else
+				echo "[FATAL]Namespace '$NAMESPACE' does not exist"
+				exit 1
+			fi
 			;;
 		info)
 			shift
+			if [[ $# -lt 1 ]]; then
+				echo "[FATAL]Must provide namespace"
+				exit 1
+			fi
 			NAMESPACE=$1
 			if namespaceExists $NAMESPACE; then
 				listPods
@@ -288,8 +396,22 @@ if [[ $# -gt 0 ]]; then
 			echo "[INFO]kubectl get namespaces --selector=$NAMESPACE_SELECTOR"
 			kubectl get namespaces --selector=$NAMESPACE_SELECTOR
 			;;
+		shell)
+			shift
+			if [[ $# -lt 1 ]]; then
+				echo "[FATAL]Must provide namespace"
+				exit 1
+			fi
+			NAMESPACE=$1
+			shift
+			if namespaceExists $NAMESPACE; then
+				runShell $*
+			else
+				echo "[FATAL]No such ksandbox: $NAMESPACE"
+			fi
+			;;
 		*)
-			echo "[FATAL]Command '$arg' not implemented"
+			echo "[FATAL]Command '$1' not implemented"
 			;;
 	esac
 else
