@@ -5,11 +5,12 @@ PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:$PATH
 REDIS_YAML=$(mktemp /tmp/redis.yaml.XXXX)
 MONGO_YAML=$(mktemp /tmp/mongo.yaml.XXXX)
 TYK_YAML=$(mktemp /tmp/tyk-pro.yaml.XXXX)
+NAMESPACE_YAML=$(mktemp /tmp/namespace.yaml.XXXX)
+OPERATOR_CONTEXT_YAML=$(mktemp /tmp/operator-context.yaml.XXXX)
 IP=$(minikube ip)
 NAMESPACE_SELECTOR="creator=hsbctl"
 EXTRA_NAMESPACE_LABELS=''
 ISTIO_INJECTION_LABEL='istio-injection=enabled'
-
 
 SCRIPTNAME=$0
 SCRIPTDIR=$(
@@ -18,7 +19,7 @@ SCRIPTDIR=$(
 )
 VERSIONFILE="$SCRIPTDIR/tyk-versions.list"
 
-trap 'rm -f $REDIS_YAML $MONGO_YAML $TYK_YAML' 0 1 2 3 15
+trap 'rm -f $REDIS_YAML $MONGO_YAML $TYK_YAML $NAMESPACE_YAML $OPERATOR_CONTEXT_YAML' 0 1 2 3 15
 
 if [[ -f ~/.tyk-sandbox ]]; then
 	. ~/.tyk-sandbox
@@ -75,40 +76,37 @@ function loadVersions {
 }
 
 function createNamespace {
-	typeset configYAML=$(mktemp /tmp/configYAML.yaml.XXXX)
-	configYAML=$(mktemp /tmp/configYAML.yaml.XXXX)
 	if ! namespaceExists $NAMESPACE; then
 		echo "[INFO]kubectl create ns $NAMESPACE"
 		kubectl create ns $NAMESPACE
 		echo "[INFO]kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR $EXTRA_NAMESPACE_LABEL"
 		kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR $EXTRA_NAMESPACE_LABEL
 		# setup config map in the new namespace with the details of the deployment
-		echo "apiVersion: v1" > $configYAML
-		echo "data:" >> $configYAML
+		echo "apiVersion: v1" > $NAMESPACE_YAML
+		echo "data:" >> $NAMESPACE_YAML
 		if [[ -n $sandboxVersion ]]; then
-			echo "  HSBX_VERSION: $sandboxVersion" >> $configYAML
+			echo "  HSBX_VERSION: $sandboxVersion" >> $NAMESPACE_YAML
 		fi
 		if [[ -n $HSBX_GATE_VERS ]]; then
-			echo "  HSBX_GW: $HSBX_GATE_VERS" >> $configYAML
+			echo "  HSBX_GW: $HSBX_GATE_VERS" >> $NAMESPACE_YAML
 		fi
 		if [[ -n $HSBX_DASH_VERS ]]; then
-			echo "  HSBX_DB: $HSBX_DASH_VERS" >> $configYAML
+			echo "  HSBX_DB: $HSBX_DASH_VERS" >> $NAMESPACE_YAML
 		fi
 		if [[ -n $HSBX_PUMP_VERS ]]; then
-			echo "  HSBX_PMP: $HSBX_PUMP_VERS" >> $configYAML
+			echo "  HSBX_PMP: $HSBX_PUMP_VERS" >> $NAMESPACE_YAML
 		fi
 		if [[ -n $HSBX_MDCB_VERS ]]; then
-			echo "  HSBX_MDCB: $HSBX_MDCB_VERS" >> $configYAML
+			echo "  HSBX_MDCB: $HSBX_MDCB_VERS" >> $NAMESPACE_YAML
 		fi
-		echo "  HSBX_DESCRIPTION: $HSBX_DESCRIPTION" >> $configYAML
-		echo "kind: ConfigMap" >> $configYAML
-		echo "metadata:" >> $configYAML
-		echo "  namespace: \"$NAMESPACE\"" >> $configYAML
-		echo "  name: sandbox-details" >> $configYAML
-		kubectl apply -f $configYAML -n $NAMESPACE
+		echo "  HSBX_DESCRIPTION: $HSBX_DESCRIPTION" >> $NAMESPACE_YAML
+		echo "kind: ConfigMap" >> $NAMESPACE_YAML
+		echo "metadata:" >> $NAMESPACE_YAML
+		echo "  namespace: \"$NAMESPACE\"" >> $NAMESPACE_YAML
+		echo "  name: sandbox-details" >> $NAMESPACE_YAML
+		kubectl apply -f $NAMESPACE_YAML -n $NAMESPACE
 		echo "[INFO]Created namespace '$NAMESPACE'"
 	fi
-	rm -f $configYAML
 }
 
 function namespaceExists {
@@ -222,6 +220,32 @@ function deployPro {
 	helm install tyk-pro tyk-helm/tyk-pro -f $TYK_YAML -n $NAMESPACE --wait
 }
 
+function deployOperatorContext {
+	typeset adminKey
+	typeset dashURL
+	typeset orgid
+	typeset OperatorContextYAML
+	OperatorContextYAML=$(mktemp /tmp/operatorContext.yaml.XXXX)
+	adminkey=$(getAdminUserKey)
+	dashURL="http://$IP:$(getDashboardPort)/"
+	orgid=$(getOrgID)
+	echo "Deploying operator context into new environment"
+	echo "apiVersion: tyk.tyk.io/v1alpha1" > $OperatorContextYAML
+	echo "kind: OperatorContext" >> $OperatorContextYAML
+	echo "metadata:" >> $OperatorContextYAML
+	echo "  name: local-operator-context" >> $OperatorContextYAML
+	echo "spec:" >> $OperatorContextYAML
+	echo "  env:" >> $OperatorContextYAML
+	echo "    mode: pro" >> $OperatorContextYAML
+	echo "    auth: $(getAdminUserKey)" >> $OperatorContextYAML
+	echo "    org: $(getOrgID)" >> $OperatorContextYAML
+	echo "    url: http://$IP:$(getDashboardPort)/" >> $OperatorContextYAML
+	echo "    insecureSkipVerify: true" >> $OperatorContextYAML
+	cat $OperatorContextYAML
+	kubectl apply -f $OperatorContextYAML -n $NAMESPACE
+	rm -f $OperatorContextYAML
+}
+
 function getDashboardPort {
 	kubectl get --namespace $NAMESPACE -o jsonpath="{.spec.ports[0]}" services dashboard-svc-tyk-pro | jq -r .nodePort
 }
@@ -256,6 +280,7 @@ function getAdminUserKey {
 			echo "  namespace: \"$NAMESPACE\"" >> $configmapYAML
 			echo "  name: adminuserkey" >> $configmapYAML
 			kubectl apply -f $configmapYAML -n $NAMESPACE > /dev/null 2>&1
+			rm -f $configmapYAML
 		else
 			echo "Unknown"
 			return
@@ -355,6 +380,7 @@ if [[ $# -gt 0 ]]; then
 				deployRedis
 				deployMongodb
 				deployPro
+				deployOperatorContext
 				listPods
 				reportSanboxInfo 
 			else
@@ -368,6 +394,7 @@ if [[ $# -gt 0 ]]; then
 				echo "[FATAL]Must provide namespace"
 				exit 1
 			fi
+			NAMESPACE=$1
 			if namespaceExists $NAMESPACE; then
 				echo "[INFO]kubectl delete namespace $*"
 				kubectl delete namespace $* --wait
@@ -396,6 +423,14 @@ if [[ $# -gt 0 ]]; then
 			echo "[INFO]kubectl get namespaces --selector=$NAMESPACE_SELECTOR"
 			kubectl get namespaces --selector=$NAMESPACE_SELECTOR
 			;;
+		setup)
+			# needs to install the helm charts, cert manager and setup the tyk-operator-system namespace
+			# install cert manager
+			kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.8.0/cert-manager.yaml
+			helm repo add tyk-helm https://helm.tyk.io/public/helm/charts/
+			helm repo update
+			helm install tyk-operator tyk-helm/tyk-operator -n tyk-operator-system
+			;;
 		shell)
 			shift
 			if [[ $# -lt 1 ]]; then
@@ -409,6 +444,10 @@ if [[ $# -gt 0 ]]; then
 			else
 				echo "[FATAL]No such ksandbox: $NAMESPACE"
 			fi
+			;;
+		upgrade)
+			echo helm upgrade -n tyk-operator-system tyk-operator tyk-helm/tyk-operator --wait
+			helm upgrade -n tyk-operator-system tyk-operator tyk-helm/tyk-operator --wait
 			;;
 		*)
 			echo "[FATAL]Command '$1' not implemented"
