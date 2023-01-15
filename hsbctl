@@ -268,10 +268,10 @@ function getAdminUserKey {
 		# get the admin user key from the dashboard logs, store it for next time and return it
 		typeset dashboardPod
 		typeset configmapYAML
-		configmapYAML=$(mktemp /tmp/configmapYAML.yaml.XXXX)
 		dashboardPod=$(kubectl get pods -n $NAMESPACE | awk '/dashboard-tyk-pro/ {print $1}' | head -1)
 		adminuserkey=$(kubectl logs $dashboardPod -n $NAMESPACE | awk '/Setting key=/ && !/key=[[:xdigit:]]+-/ {print $NF; exit}'| cut -d= -f2 | tr -d '"')
 		if [[ -n $adminuserkey ]]; then
+			configmapYAML=$(mktemp /tmp/configmapYAML.yaml.XXXX)
 			echo "apiVersion: v1" > $configmapYAML
 			echo "data:" >> $configmapYAML
 			echo "  adminuserkey: $adminuserkey" >> $configmapYAML
@@ -299,10 +299,10 @@ function getOrgID {
 		# get the admin user key from the dashboard logs, store it for next time and return it
 		typeset dashboardPod
 		typeset configmapYAML
-		configmapYAML=$(mktemp /tmp/configmapYAML.yaml.XXXX)
 		dashboardPod=$(kubectl get pods -n $NAMESPACE | awk '/dashboard-tyk-pro/ {print $1; exit}')
 		orgid=$(kubectl logs $dashboardPod -n $NAMESPACE | awk '/Default Org/ {print $5; exit}' | cut -d\{ -f 2)
 		if [[ -n $orgid ]]; then
+			configmapYAML=$(mktemp /tmp/configmapYAML.yaml.XXXX)
 			echo "apiVersion: v1" > $configmapYAML
 			echo "data:" >> $configmapYAML
 			echo "  orgid: $orgid" >> $configmapYAML
@@ -311,6 +311,7 @@ function getOrgID {
 			echo "  namespace: \"$NAMESPACE\"" >> $configmapYAML
 			echo "  name: orgid" >> $configmapYAML
 			kubectl apply -f $configmapYAML -n $NAMESPACE > /dev/null 2>&1
+			rm -f $configmapYAML
 		else
 			echo "Unknown"
 			return
@@ -347,9 +348,11 @@ if [[ $# -gt 0 ]]; then
 						EXTRA_NAMESPACE_LABELS="$ISTIO_INJECTION_LABEL $EXTRA_NAMESPACE_LABELS"
 						;;
 					t)
+						# the description of the sandbox
 						HSBX_DESCRIPTION="$OPTARG"
 						;;
 					v)
+						# the base version to lookup in tyk-versions.list
 						sandboxVersion=$OPTARG
 						;;
 					:)
@@ -381,6 +384,12 @@ if [[ $# -gt 0 ]]; then
 				deployMongodb
 				deployPro
 				deployOperatorContext
+				for API in $SCRIPTDIR/operator/APIs/*.yaml; do
+					if [[ -f $API ]]; then
+						echo kubectl apply -f $API -n $NAMESPACE
+						kubectl apply -f $API -n $NAMESPACE
+					fi
+				done
 				listPods
 				reportSanboxInfo 
 			else
@@ -394,14 +403,15 @@ if [[ $# -gt 0 ]]; then
 				echo "[FATAL]Must provide namespace"
 				exit 1
 			fi
-			NAMESPACE=$1
-			if namespaceExists $NAMESPACE; then
-				echo "[INFO]kubectl delete namespace $*"
-				kubectl delete namespace $* --wait
-			else
-				echo "[FATAL]Namespace '$NAMESPACE' does not exist"
-				exit 1
-			fi
+			for NAMESPACE in $*; do
+				if namespaceExists $NAMESPACE; then
+					echo "[INFO]kubectl delete namespace $*"
+					kubectl delete namespace $NAMESPACE --wait
+				else
+					echo "[FATAL]Namespace '$NAMESPACE' does not exist"
+					exit 1
+				fi
+			done
 			;;
 		info)
 			shift
@@ -409,14 +419,17 @@ if [[ $# -gt 0 ]]; then
 				echo "[FATAL]Must provide namespace"
 				exit 1
 			fi
-			NAMESPACE=$1
-			if namespaceExists $NAMESPACE; then
-				listPods
-				reportSanboxInfo
-			else
-				echo "[FATAL]Namespace '$NAMESPACE' does not exist"
-				exit 1
-			fi
+			for NAMESPACE in $*; do
+				if namespaceExists $NAMESPACE; then
+					echo $NAMESPACE:
+					listPods
+					reportSanboxInfo
+				else
+					echo "[FATAL]Namespace '$NAMESPACE' does not exist"
+					exit 1
+				fi
+				echo
+			done
 			;;
 		list)
 			shift
