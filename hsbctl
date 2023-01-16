@@ -252,7 +252,7 @@ function deployOperatorContext {
 function deployAPIs {
 	typeset APIsourceYaml
 	typeset tmpAPIyaml
-	tmpAPIyaml=$(mktemp /tmp/APY.yaml.XXXX)
+	tmpAPIyaml=$(mktemp /tmp/API.yaml.XXXX)
 	for APIsourceYaml in $*; do
 		if [[ -f $APIsourceYaml ]]; then
 			cp $APIsourceYaml $tmpAPIyaml
