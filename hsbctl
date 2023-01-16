@@ -48,6 +48,8 @@ function help {
 	echo "      Tail the logs of the named pod"
 	echo "$name info <namespace>"
 	echo "      Print info on the particular instance"
+	echo "$name publish <sandbox namespace> <api.yaml ...>"
+	echo "      Publish the API in api.yaml into the sandbox"
 	echo "$name shell <namespace> <pod>"
 	echo "      Start an interactive shell in the pod."
 	echo "      The pod name can be a substring of the actual name"
@@ -238,9 +240,9 @@ function deployOperatorContext {
 	echo "spec:" >> $OperatorContextYAML
 	echo "  env:" >> $OperatorContextYAML
 	echo "    mode: pro" >> $OperatorContextYAML
-	echo "    auth: $(getAdminUserKey)" >> $OperatorContextYAML
-	echo "    org: $(getOrgID)" >> $OperatorContextYAML
-	echo "    url: http://$IP:$(getDashboardPort)/" >> $OperatorContextYAML
+	echo "    auth: $adminkey" >> $OperatorContextYAML
+	echo "    org: $orgid" >> $OperatorContextYAML
+	echo "    url: $dashURL" >> $OperatorContextYAML
 	echo "    insecureSkipVerify: true" >> $OperatorContextYAML
 	echo "[INFO]kubectl apply -f $OperatorContextYAML -n $NAMESPACE"
 	kubectl apply -f $OperatorContextYAML -n $NAMESPACE
@@ -251,7 +253,7 @@ function deployAPIs {
 	typeset APIsourceYaml
 	typeset tmpAPIyaml
 	tmpAPIyaml=$(mktemp /tmp/APY.yaml.XXXX)
-	for APIsourceYaml in $SCRIPTDIR/operator/APIs/*.yaml; do
+	for APIsourceYaml in $*; do
 		if [[ -f $APIsourceYaml ]]; then
 			cp $APIsourceYaml $tmpAPIyaml
 			yq ".spec.contextRef.namespace = \"$NAMESPACE\"" -i $tmpAPIyaml
@@ -354,7 +356,7 @@ function reportSanboxInfo {
 
 # process commands
 if [[ $# -gt 0 ]]; then
-	case $1 in 
+	case $1 in
 		create)
 			shift
 			while getopts v:t: arg; do
@@ -400,9 +402,9 @@ if [[ $# -gt 0 ]]; then
 				deployMongodb
 				deployPro
 				deployOperatorContext
-				deployAPIs
+				deployAPIs $SCRIPTDIR/operator/APIs/*.yaml
 				listPods
-				reportSanboxInfo 
+				reportSanboxInfo
 			else
 				echo "[FATAL]Namespace $NAMESPACE already exists"
 				exit 1
@@ -414,10 +416,30 @@ if [[ $# -gt 0 ]]; then
 				echo "[FATAL]Must provide namespace"
 				exit 1
 			fi
+			typeset API
+			typeset OC
 			for NAMESPACE in $*; do
 				if namespaceExists $NAMESPACE; then
-					echo "[INFO]kubectl delete namespace $NAMESPACE --wait --force --grace-period=0"
-					kubectl delete namespace $NAMESPACE --wait --force --grace-period=0
+					echo "[INFO]Deleting Namespace $NAMESPACE"
+					# clean up the APIs first
+					echo "[INFO]Deleting defined ApiDefinitions from $NAMESPACE"
+					for API in $(kubectl get apidefinition -n $NAMESPACE --no-headers=true | awk '{print $1}'); do
+						# have to remove the API finalizer to stop the namespace delete hanging
+						kubectl get apidefinition $API -n $NAMESPACE -o yaml | yq 'del(.metadata.finalizers[])' | kubectl apply -f -
+						echo "[INFO]kubectl delete apidefinition $API -n $NAMESPACE"
+						kubectl delete apidefinition $API -n $NAMESPACE
+					done
+					# delete OperatorContext finalizer since it can hang too
+					echo "[INFO]Deleting defined OperatorContext from $NAMESPACE"
+					for OC in $(kubectl get OperatorContext -n $NAMESPACE --no-headers=true | awk '{print $1}'); do
+						# have to remove the API finalizer to stop the namespace delete hanging
+						kubectl get OperatorContext $OC -n $NAMESPACE -o yaml | yq 'del(.metadata.finalizers[])' | kubectl apply -f -
+						echo "[INFO]kubectl delete OperatorContext $OC -n $NAMESPACE"
+						kubectl delete OperatorContext $OC -n $NAMESPACE
+					done
+
+					echo "[INFO]kubectl delete namespace $NAMESPACE --wait"
+					kubectl delete namespace $NAMESPACE --wait
 				else
 					echo "[FATAL]Namespace '$NAMESPACE' does not exist"
 					exit 1
@@ -446,6 +468,18 @@ if [[ $# -gt 0 ]]; then
 			shift
 			echo "[INFO]kubectl get namespaces --selector=$NAMESPACE_SELECTOR"
 			kubectl get namespaces --selector=$NAMESPACE_SELECTOR
+			;;
+		publish)
+			shift
+			if [[ $# -lt 2 ]]; then
+				echo "[FATAL]Must provide namespace and path to API YAML file"
+				exit 1
+			fi
+			NAMESPACE=$1
+			shift
+			if namespaceExists $NAMESPACE; then
+				deployAPIs $*
+			fi
 			;;
 		setup)
 			# needs to install the helm charts, cert manager and setup the tyk-operator-system namespace
