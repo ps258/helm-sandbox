@@ -202,6 +202,7 @@ function deployPro {
 	yq '.dash.extraEnvs += { "name": "TYK_DB_ENABLEHASHEDKEYSLISTING", "value": "true" }' -i $TYK_YAML
 	yq '.gateway.extraEnvs += { "name": "TYK_GW_ENABLEHASHEDKEYSLISTING", "value": "true" }' -i $TYK_YAML
 	yq '.gateway.extraEnvs += { "name": "TYK_GW_HASHKEYFUNCTION", "value": "murmur64" }' -i $TYK_YAML
+	yq '.gateway.extraEnvs += { "name": "TYK_GW_ENABLEJSVM", "value": "true" }' -i $TYK_YAML
 
 	# change the gateway kind to deployment
 	yq '.gateway.kind = "Deployment"' -i $TYK_YAML
@@ -241,9 +242,24 @@ function deployOperatorContext {
 	echo "    org: $(getOrgID)" >> $OperatorContextYAML
 	echo "    url: http://$IP:$(getDashboardPort)/" >> $OperatorContextYAML
 	echo "    insecureSkipVerify: true" >> $OperatorContextYAML
-	cat $OperatorContextYAML
+	echo "[INFO]kubectl apply -f $OperatorContextYAML -n $NAMESPACE"
 	kubectl apply -f $OperatorContextYAML -n $NAMESPACE
 	rm -f $OperatorContextYAML
+}
+
+function deployAPIs {
+	typeset APIsourceYaml
+	typeset tmpAPIyaml
+	tmpAPIyaml=$(mktemp /tmp/APY.yaml.XXXX)
+	for APIsourceYaml in $SCRIPTDIR/operator/APIs/*.yaml; do
+		if [[ -f $APIsourceYaml ]]; then
+			cp $APIsourceYaml $tmpAPIyaml
+			yq ".spec.contextRef.namespace = \"$NAMESPACE\"" -i $tmpAPIyaml
+			echo "[INFO]kubectl apply -f $tmpAPIyaml -n $NAMESPACE"
+			kubectl apply -f $tmpAPIyaml -n $NAMESPACE
+		fi
+	done
+	rm -f $tmpAPIyaml
 }
 
 function getDashboardPort {
@@ -384,12 +400,7 @@ if [[ $# -gt 0 ]]; then
 				deployMongodb
 				deployPro
 				deployOperatorContext
-				for API in $SCRIPTDIR/operator/APIs/*.yaml; do
-					if [[ -f $API ]]; then
-						echo kubectl apply -f $API -n $NAMESPACE
-						kubectl apply -f $API -n $NAMESPACE
-					fi
-				done
+				deployAPIs
 				listPods
 				reportSanboxInfo 
 			else
@@ -405,8 +416,8 @@ if [[ $# -gt 0 ]]; then
 			fi
 			for NAMESPACE in $*; do
 				if namespaceExists $NAMESPACE; then
-					echo "[INFO]kubectl delete namespace $*"
-					kubectl delete namespace $NAMESPACE --wait
+					echo "[INFO]kubectl delete namespace $NAMESPACE --wait --force --grace-period=0"
+					kubectl delete namespace $NAMESPACE --wait --force --grace-period=0
 				else
 					echo "[FATAL]Namespace '$NAMESPACE' does not exist"
 					exit 1
