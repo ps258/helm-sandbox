@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -u
 
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:$PATH
 
@@ -75,14 +75,15 @@ function loadVersions {
 	export HSBX_GATE_VERS="v${gwVers%%-*}"
 	export HSBX_DASH_VERS="v${dshbVers%%-*}"
 	export HSBX_PUMP_VERS="v${pumpVers%%-*}"
+	export HSBX_MDCB_VERS="v${syncVers%%-*}"
 }
 
 function createNamespace {
 	if ! namespaceExists $NAMESPACE; then
 		echo "[INFO]kubectl create ns $NAMESPACE"
 		kubectl create ns $NAMESPACE
-		echo "[INFO]kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR $EXTRA_NAMESPACE_LABEL"
-		kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR $EXTRA_NAMESPACE_LABEL
+		echo "[INFO]kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR $EXTRA_NAMESPACE_LABELS"
+		kubectl label ns $NAMESPACE $NAMESPACE_SELECTOR $EXTRA_NAMESPACE_LABELS
 		# setup config map in the new namespace with the details of the deployment
 		echo "apiVersion: v1" > $NAMESPACE_YAML
 		echo "data:" >> $NAMESPACE_YAML
@@ -359,7 +360,7 @@ if [[ $# -gt 0 ]]; then
 	case $1 in
 		create)
 			shift
-			while getopts v:t: arg; do
+			while getopts v:t:i arg; do
 				case $arg in
 					i)
 						# add the istio label to the namespace so it's picked up by istio
