@@ -11,6 +11,7 @@ IP=$(minikube ip)
 NAMESPACE_SELECTOR="creator=hsbctl"
 EXTRA_NAMESPACE_LABELS=''
 ISTIO_INJECTION_LABEL='istio-injection=enabled'
+HSBX_DESCRIPTION='N/A'
 
 SCRIPTNAME=$0
 SCRIPTDIR=$(
@@ -360,7 +361,7 @@ if [[ $# -gt 0 ]]; then
 	case $1 in
 		create)
 			shift
-			while getopts v:t:i arg; do
+			while getopts :v:t:i arg; do
 				case $arg in
 					i)
 						# add the istio label to the namespace so it's picked up by istio
