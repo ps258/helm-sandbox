@@ -12,6 +12,7 @@ NAMESPACE_SELECTOR="creator=hsbctl"
 EXTRA_NAMESPACE_LABELS=''
 ISTIO_INJECTION_LABEL='istio-injection=enabled'
 HSBX_DESCRIPTION='N/A'
+HSBX_TYPE=pro
 
 SCRIPTNAME=$0
 SCRIPTDIR=$(
@@ -79,6 +80,11 @@ function loadVersions {
 	export HSBX_MDCB_VERS="v${syncVers%%-*}"
 }
 
+function getInstallType {
+  HSBX_TYPE=$(kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_TYPE)
+	echo HSBX_TYPE = $HSBX_TYPE
+}
+
 function createNamespace {
 	if ! namespaceExists $NAMESPACE; then
 		echo "[INFO]kubectl create ns $NAMESPACE"
@@ -103,6 +109,7 @@ function createNamespace {
 		if [[ -n $HSBX_MDCB_VERS ]]; then
 			echo "  HSBX_MDCB: $HSBX_MDCB_VERS" >> $NAMESPACE_YAML
 		fi
+		echo "  HSBX_TYPE: $HSBX_TYPE" >> $NAMESPACE_YAML
 		echo "  HSBX_DESCRIPTION: $HSBX_DESCRIPTION" >> $NAMESPACE_YAML
 		echo "kind: ConfigMap" >> $NAMESPACE_YAML
 		echo "metadata:" >> $NAMESPACE_YAML
@@ -183,6 +190,31 @@ function deployMongodb {
 	# the bitnami chart adds -mongodb to the name so just call it 'tyk' here and then connect using 'tyk-mongodb'
 	# it takes a while to start so wait for it
 	helm install tyk bitnami/mongodb -f $MONGO_YAML -n $NAMESPACE --wait
+}
+
+function deployHeadless {
+
+	echo "[INFO]Deploying Headless gateway"
+	helm show values tyk-helm/tyk-headless > $TYK_YAML
+	yq '.gateway.image.tag = "'$HSBX_GATE_VERS'"' -i $TYK_YAML
+
+	# setup redis and mongo connections in tyk's yaml
+	yq '.redis.addrs = "tyk-redis-master.'$NAMESPACE'.svc.cluster.local:6379"' -i $TYK_YAML
+	yq '.mongo.mongoURL = "mongodb://tyk-mongodb.'$NAMESPACE'.svc.cluster.local:27017/tyk_analytics"' -i $TYK_YAML
+
+	## set env variables
+	# debug logging
+	yq '.pump.extraEnvs += { "name": "TYK_LOGLEVEL", "value": "debug" }' -i $TYK_YAML
+	yq '.gateway.extraEnvs += { "name": "TYK_LOGLEVEL", "value": "debug" }' -i $TYK_YAML
+	yq '.dash.extraEnvs += { "name": "TYK_LOGLEVEL", "value": "debug" }' -i $TYK_YAML
+
+	# change the gateway kind to deployment
+	yq '.gateway.kind = "Deployment"' -i $TYK_YAML
+
+	# things operator needs
+	yq '.gateway.extraEnvs += { "name": "TYK_GW_POLICIES_ALLOWEXPLICITPOLICYID", "value": "true" }' -i $TYK_YAML
+
+	helm install tyk-pro tyk-helm/tyk-headless -f $TYK_YAML -n $NAMESPACE --wait
 }
 
 function deployPro {
@@ -340,14 +372,23 @@ function getOrgID {
 	echo $orgid
 }
 
+function getStandaloneGatewayPort {
+  kubectl get svc -n $NAMESPACE gateway-svc-tyk-pro-tyk-headless --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+}
+
 # can't get redis, mongo, postres info because they're not exposed with help charts
 # also can't get orgid and admin key details because redis isn't exposed
 function reportSanboxInfo {
-	echo "$NAMESPACE.Description:       $(getDescription)"
-	echo "$NAMESPACE.dashboard:         http://$IP:$(getDashboardPort)/"
-	echo "$NAMESPACE.control-gateway:   http://$IP:$(getGatewayPort)/"
-	echo "$NAMESPACE.AdminKey:          $(getAdminUserKey)"
-	echo "$NAMESPACE.OrgID:             $(getOrgID)"
+	if [[ $HSBX_TYPE == 'pro' ]]; then
+		echo "$NAMESPACE.Description:       $(getDescription)"
+		echo "$NAMESPACE.dashboard:         http://$IP:$(getDashboardPort)/"
+		echo "$NAMESPACE.control-gateway:   http://$IP:$(getGatewayPort)/"
+		echo "$NAMESPACE.AdminKey:          $(getAdminUserKey)"
+		echo "$NAMESPACE.OrgID:             $(getOrgID)"
+	fi
+	if [[ $HSBX_TYPE == 'headless' ]]; then
+		echo "$NAMESPACE.gateway:   http://$IP:$(getStandaloneGatewayPort)/"
+	fi
 	# if the namespace has the label 'istio-injection=enabled' then report the istio-system services
 	if kubectl get ns --show-labels --no-headers=true $NAMESPACE | grep -q $ISTIO_INJECTION_LABEL; then
 		echo "Kiali:                        http://$IP:$(kubectl get svc -n istio-system kiali --no-headers=true | awk -F '[:/ ]+' '{print $6}')/"
@@ -361,11 +402,15 @@ if [[ $# -gt 0 ]]; then
 	case $1 in
 		create)
 			shift
-			while getopts :v:t:i arg; do
+			while getopts :v:st:i arg; do
 				case $arg in
 					i)
 						# add the istio label to the namespace so it's picked up by istio
 						EXTRA_NAMESPACE_LABELS="$ISTIO_INJECTION_LABEL $EXTRA_NAMESPACE_LABELS"
+						;;
+					s)
+						# stand alone install
+						HSBX_TYPE=headless
 						;;
 					t)
 						# the description of the sandbox
@@ -401,10 +446,14 @@ if [[ $# -gt 0 ]]; then
 				fi
 				createNamespace
 				deployRedis
-				deployMongodb
-				deployPro
-				deployOperatorContext
-				deployAPIs $SCRIPTDIR/operator/APIs/*.yaml
+				if [[ HSBX_TYPE == "pro" ]]; then
+					deployMongodb
+					deployPro
+					deployOperatorContext
+					deployAPIs $SCRIPTDIR/operator/APIs/*.yaml
+				else
+					deployHeadless
+				fi
 				listPods
 				reportSanboxInfo
 			else
@@ -456,6 +505,7 @@ if [[ $# -gt 0 ]]; then
 			fi
 			for NAMESPACE in $*; do
 				if namespaceExists $NAMESPACE; then
+					getInstallType
 					echo $NAMESPACE:
 					listPods
 					reportSanboxInfo
