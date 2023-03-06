@@ -539,6 +539,8 @@ if [[ $# -gt 0 ]]; then
 			kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.8.0/cert-manager.yaml
 			helm repo add tyk-helm https://helm.tyk.io/public/helm/charts/
 			helm repo update
+			kubectl create namespace tyk-operator-system
+			kubectl create secret -n tyk-operator-system generic tyk-operator-conf --from-literal "TYK_TLS_INSECURE_SKIP_VERIFY=true"
 			helm install tyk-operator tyk-helm/tyk-operator -n tyk-operator-system
 			;;
 		shell)
