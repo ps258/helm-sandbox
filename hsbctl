@@ -446,7 +446,7 @@ if [[ $# -gt 0 ]]; then
 				fi
 				createNamespace
 				deployRedis
-				if [[ HSBX_TYPE == "pro" ]]; then
+				if [[ $HSBX_TYPE == "pro" ]]; then
 					deployMongodb
 					deployPro
 					deployOperatorContext
