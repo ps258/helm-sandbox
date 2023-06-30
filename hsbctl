@@ -224,6 +224,11 @@ function deployPro {
 	yq '.gateway.image.tag = "'$HSBX_GATE_VERS'"' -i $TYK_YAML
 	yq '.pump.image.tag = "'$HSBX_PUMP_VERS'"' -i $TYK_YAML
 
+	# enterprise portal stuff
+	yq '.enterprisePortal.image.tag = "v1.4.0"' -i $TYK_YAML
+	yq '.enterprisePortal.enabled = true' -i $TYK_YAML
+	yq '.enterprisePortal.readinessProbe.initialDelaySeconds = 30' -i $TYK_YAML
+
 	# setup redis and mongo connections in tyk's yaml
 	yq '.redis.addrs = "tyk-redis-master.'$NAMESPACE'.svc.cluster.local:6379"' -i $TYK_YAML
 	yq '.mongo.mongoURL = "mongodb://tyk-mongodb.'$NAMESPACE'.svc.cluster.local:27017/tyk_analytics"' -i $TYK_YAML
