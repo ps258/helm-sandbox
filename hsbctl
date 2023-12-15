@@ -13,6 +13,8 @@ EXTRA_NAMESPACE_LABELS=''
 ISTIO_INJECTION_LABEL='istio-injection=enabled'
 HSBX_DESCRIPTION='N/A'
 HSBX_TYPE=pro
+HSBX_DBASE=mongodb
+HSBX_ENT_PORTAL=false
 
 SCRIPTNAME=$0
 SCRIPTDIR=$(
@@ -21,7 +23,7 @@ SCRIPTDIR=$(
 )
 VERSIONFILE="$SCRIPTDIR/tyk-versions.list"
 
-trap 'rm -f $REDIS_YAML $MONGO_YAML $TYK_YAML $NAMESPACE_YAML $OPERATOR_CONTEXT_YAML' 0 1 2 3 15
+#trap 'rm -f $REDIS_YAML $MONGO_YAML $TYK_YAML $NAMESPACE_YAML $OPERATOR_CONTEXT_YAML' 0 1 2 3 15
 
 if [[ -f ~/.tyk-sandbox ]]; then
 	. ~/.tyk-sandbox
@@ -39,6 +41,7 @@ function help {
 	echo "[USAGE]:"
 	echo "$name create -v <tyk version> -t <namespace description> [-p|-s] -i"
 	echo "      Create a tyk instance the name space given as a tag"
+	echo "      -e Deploy the enterprise portal"
 	echo "      -i add the istio label to the namespace so istio is injected into the pods"
 	echo "      -p deploy with postgres not mongo"
 	echo "      -s deploy a stand alone gateway"
@@ -192,6 +195,16 @@ function deployMongodb {
 	helm install tyk bitnami/mongodb -f $MONGO_YAML -n $NAMESPACE --wait
 }
 
+function deployPostgres {
+	echo "[INFO]Deploying control plane postgres"
+	helm install tyk-postgres bitnami/postgresql --set "auth.database=tyk_analytics,auth.password=NAMESPACE" -n $NAMESPACE --wait
+	if [[ $HSBX_ENT_PORTAL = 'true' ]]; then
+		echo "[INFO]Deploying postgres for the Enterprise Portal"
+		helm install tyk-portal-postgres bitnami/postgresql --set "auth.database=tyk_portal,auth.password=NAMESPACE" -n $NAMESPACE --wait
+	fi
+}
+
+
 function deployHeadless {
 
 	echo "[INFO]Deploying Headless gateway"
@@ -224,14 +237,36 @@ function deployPro {
 	yq '.gateway.image.tag = "'$HSBX_GATE_VERS'"' -i $TYK_YAML
 	yq '.pump.image.tag = "'$HSBX_PUMP_VERS'"' -i $TYK_YAML
 
-	# enterprise portal stuff
-	yq '.enterprisePortal.image.tag = "v1.4.0"' -i $TYK_YAML
-	yq '.enterprisePortal.enabled = true' -i $TYK_YAML
-	yq '.enterprisePortal.readinessProbe.initialDelaySeconds = 30' -i $TYK_YAML
-
-	# setup redis and mongo connections in tyk's yaml
+	# setup redis, mongo and postgres connections in tyk's yaml
 	yq '.redis.addrs = "tyk-redis-master.'$NAMESPACE'.svc.cluster.local:6379"' -i $TYK_YAML
-	yq '.mongo.mongoURL = "mongodb://tyk-mongodb.'$NAMESPACE'.svc.cluster.local:27017/tyk_analytics"' -i $TYK_YAML
+	if [[ $HSBX_DBASE == "mongodb" ]]; then
+		yq '.backend = "mongo"' -i $TYK_YAML
+		yq '.mongo.mongoURL = "mongodb://tyk-mongodb.'$NAMESPACE'.svc.cluster.local:27017/tyk_analytics"' -i $TYK_YAML
+	elif [[ $HSBX_DBASE == "postgres" ]]; then
+		yq '.backend = "postgres"' -i $TYK_YAML
+		yq '.postgres.host = "tyk-postgres-postgresql.'$NAMESPACE'.svc.cluster.local"' -i $TYK_YAML
+		yq '.postgres.password = "NAMESPACE"' -i $TYK_YAML
+	fi
+
+	# enterprise portal stuff
+	if [[ $HSBX_ENT_PORTAL = 'true' ]]; then
+		yq '.enterprisePortal.enabled = false' -i $TYK_YAML
+		yq '.enterprisePortal.image.tag = "'$HSBX_ENT_PORTAL_VERS'"' -i $TYK_YAML
+		yq '.enterprisePortal.license = "'$SBX_LICENSE'"' -i $TYK_YAML
+		yq '.enterprisePortal.containerPort = 3001' -i $TYK_YAML
+		yq '.enterprisePortal.adminUser.email = "'$SBX_USER'"' -i $TYK_YAML
+		yq '.enterprisePortal.adminUser.password = "'$(echo $SBX_PASSWORD| base64 -d)'"' -i $TYK_YAML
+		yq '.enterprisePortal.readinessProbe.initialDelaySeconds = 30' -i $TYK_YAML
+		yq '.dash.enterprisePortalSecret = true' -i $TYK_YAML
+		if [[ $HSBX_DBASE == "mongodb" ]]; then
+			yq '.enterprisePortal.database.type = "mongodb"' -i $TYK_YAML
+			yq '.enterprisePortal.extraEnvs += { "name": "PORTAL_DATABASE_DIALECT", "value": "mongo" }' -i $TYK_YAML
+		elif [[ $HSBX_DBASE == "postgres" ]]; then
+			yq '.enterprisePortal.database.type = "postgres"' -i $TYK_YAML
+			yq '.enterprisePortal.database.connectionString = "host=tyk-portal-postgres-postgresql.'$NAMESPACE'.svc.cluster.local port=5432 user=postgres dbname=tyk_portal password=NAMESPACE sslmode=disable"' -i $TYK_YAML
+		fi
+		yq '.enterprisePortal.extraEnvs += { "name": "TYK_LOGLEVEL", "value": "debug" }' -i $TYK_YAML
+	fi
 
 	## set env variables
 	# debug logging
@@ -255,11 +290,13 @@ function deployPro {
 		yq '.dash.adminUser.email = "'$SBX_USER'"' -i $TYK_YAML
 		yq '.dash.adminUser.password = "'$(echo $SBX_PASSWORD| base64 -d)'"' -i $TYK_YAML
 		yq '.dash.license = "'$SBX_LICENSE'"' -i $TYK_YAML
-		yq '.dash.bootstrap = "true"' -i $TYK_YAML
+		yq '.dash.bootstrap = true' -i $TYK_YAML
 	else
-		yq '.dash.bootstrap = "false"' -i $TYK_YAML
+		yq '.dash.bootstrap = false' -i $TYK_YAML
 	fi
 	helm install tyk-pro tyk-helm/tyk-pro -f $TYK_YAML -n $NAMESPACE --wait
+	#yq '.enterprisePortal.enabled = true' -i $TYK_YAML
+	echo helm upgrade tyk-pro tyk-helm/tyk-pro -f $TYK_YAML --set enterprisePortal.enabled=true -n $NAMESPACE --wait
 }
 
 function deployOperatorContext {
@@ -439,11 +476,20 @@ if [[ $# -gt 0 ]]; then
 	case $1 in
 		create)
 			shift
-			while getopts :v:st:i arg; do
+			while getopts :v:epst:i arg; do
 				case $arg in
+					e)
+						# deploy the enterprise portal
+						HSBX_ENT_PORTAL=true
+						HSBX_ENT_PORTAL_VERS=v1.5
+						;;
 					i)
 						# add the istio label to the namespace so it's picked up by istio
 						EXTRA_NAMESPACE_LABELS="$ISTIO_INJECTION_LABEL $EXTRA_NAMESPACE_LABELS"
+						;;
+					p)
+						# postgresql
+						HSBX_DBASE=postgres
 						;;
 					s)
 						# stand alone install
@@ -484,7 +530,14 @@ if [[ $# -gt 0 ]]; then
 				createNamespace
 				deployRedis
 				if [[ $HSBX_TYPE == "pro" ]]; then
-					deployMongodb
+					if [[ $HSBX_DBASE == "mongodb" ]]; then
+						deployMongodb
+					elif [[ $HSBX_DBASE == "postgres" ]]; then
+						deployPostgres
+					else
+						echo "[FATAL]Unknown backend database type $HSBX_DBASE"
+						exit 1
+					fi
 					deployPro
 					deployOperatorContext
 					deployAPIs $SCRIPTDIR/operator/APIs/*.yaml
