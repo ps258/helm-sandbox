@@ -98,22 +98,22 @@ function createNamespace {
 		echo "apiVersion: v1" > $NAMESPACE_YAML
 		echo "data:" >> $NAMESPACE_YAML
 		if [[ -n $sandboxVersion ]]; then
-			echo "  HSBX_VERSION: $sandboxVersion" >> $NAMESPACE_YAML
+			echo "  HSBX_VERSION: \"$sandboxVersion\"" >> $NAMESPACE_YAML
 		fi
 		if [[ -n $HSBX_GATE_VERS ]]; then
-			echo "  HSBX_GW: $HSBX_GATE_VERS" >> $NAMESPACE_YAML
+			echo "  HSBX_GW: \"$HSBX_GATE_VERS\"" >> $NAMESPACE_YAML
 		fi
 		if [[ -n $HSBX_DASH_VERS ]]; then
-			echo "  HSBX_DB: $HSBX_DASH_VERS" >> $NAMESPACE_YAML
+			echo "  HSBX_DB: \"$HSBX_DASH_VERS\"" >> $NAMESPACE_YAML
 		fi
 		if [[ -n $HSBX_PUMP_VERS ]]; then
-			echo "  HSBX_PMP: $HSBX_PUMP_VERS" >> $NAMESPACE_YAML
+			echo "  HSBX_PMP: \"$HSBX_PUMP_VERS\"" >> $NAMESPACE_YAML
 		fi
 		if [[ -n $HSBX_MDCB_VERS ]]; then
-			echo "  HSBX_MDCB: $HSBX_MDCB_VERS" >> $NAMESPACE_YAML
+			echo "  HSBX_MDCB: \"$HSBX_MDCB_VERS\"" >> $NAMESPACE_YAML
 		fi
-		echo "  HSBX_TYPE: $HSBX_TYPE" >> $NAMESPACE_YAML
-		echo "  HSBX_DESCRIPTION: $HSBX_DESCRIPTION" >> $NAMESPACE_YAML
+		echo "  HSBX_TYPE: \"$HSBX_TYPE\"" >> $NAMESPACE_YAML
+		echo "  HSBX_DESCRIPTION: \"$HSBX_DESCRIPTION\"" >> $NAMESPACE_YAML
 		echo "kind: ConfigMap" >> $NAMESPACE_YAML
 		echo "metadata:" >> $NAMESPACE_YAML
 		echo "  namespace: \"$NAMESPACE\"" >> $NAMESPACE_YAML
@@ -185,7 +185,7 @@ function deployMongodb {
 	# override the defaults
 	helm show values bitnami/mongodb > $MONGO_YAML
 	yq '.auth.enabled = false' -i $MONGO_YAML
-	yq '.image.tag = "4.4"' -i $MONGO_YAML
+	#yq '.image.tag = "4.4"' -i $MONGO_YAML
 	yq '.architecture = "standalone"' -i $MONGO_YAML
 	# disable the liveness and readines probes because they take too much CPU
 	yq '.livenessProbe.enabled = false' -i $MONGO_YAML
@@ -294,7 +294,8 @@ function deployPro {
 	else
 		yq '.dash.bootstrap = false' -i $TYK_YAML
 	fi
-	helm install tyk-pro tyk-helm/tyk-pro -f $TYK_YAML -n $NAMESPACE --wait
+	#helm install tyk-pro tyk-helm/tyk-pro -f $TYK_YAML -n $NAMESPACE --wait --version 0.13.2
+	helm install tyk-pro tyk-helm/tyk-pro -f $TYK_YAML -n $NAMESPACE --wait --version 0.13.2
 	#yq '.enterprisePortal.enabled = true' -i $TYK_YAML
 	echo helm upgrade tyk-pro tyk-helm/tyk-pro -f $TYK_YAML --set enterprisePortal.enabled=true -n $NAMESPACE --wait
 }
