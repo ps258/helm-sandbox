@@ -34,16 +34,32 @@ HSBX_PGDB=tyk_analytics    # default postgres database
 HSBX_TYK_K8S_SECRETS=tyk-system-secrets  # licences and admin secrets
 HSBX_ADMIN_ACCOUNT_SECRETS=tyk-admin-account-secrets # Admin user details
 HSBX_EDP_SECRET=tyk-EDP-secret
+HSBX_REDIS_DB_SIZE=1      # the size to make the redis persistent volume claim for both control plane and edge deployment
+HSBX_PG_MAIN_DB_SIZE=5    # the size to make the mongo or postgresql DB persistent volume claim
+HSBX_PG_PORTAL_THEMES_SIZE=2   # the size to make EDP's /opt/portal/themes volume for storing themes
 HSBX_CHART=tyk-stack
 REDIS_PASSWORD=''
-MONGODB_ROOT_PASSWORD=''
-MONGODB_URL=''
 MONGODB_SECRETS=mongourl-secrets
+PG_SERETS=postgres-secrets
 
-#NAMESPACE=tyk
+# set the services to NodePort
+HELM_TYK_GATEWAY_SERVICE_TYPE=NodePort
+HELM_TYK_GATEWAY_CONTROL_TYPE=NodePort
+HELM_TYK_PUMP_SERVICE_TYPE=NodePort
+HELM_TYK_DASHBOARD_SERVICE_TYPE=NodePort
+
+HELM_SET_MONGO_DRIVER=''
+HELM_SET_MONGO_URL_SECRET_NAME=''
+HELM_SET_MONGO_URL_SECRET_KEYNAME=''
+
+HELM_SET_PG_CONNECTION_SECRET_NAME=''
+HELM_SET_PG_CONNECTION_SECRET_KEYNAME=''
+
+
 HELM_TYK_RELEASE_NAME=tykstack
 REDIS_BITNAMI_CHART_VERSION=19.0.2
 MONGO_BITNAMI_CHART_VERSION=15.1.3
+POSTGRES_BITNAMI_CHART_VERSION=12.12.10
 ADMIN_EMAIL=''
 ADMIN_PASSWORD=''
 
@@ -57,7 +73,25 @@ else
 fi
 
 function help {
-  echo "[FATAL]No help defined yet"
+  typeset name
+  name=$SCRIPTNAME
+  echo "[USAGE]: $name create -v <tyk version> -t <namespace description> -N <namespace name> [-p|-s] [-c gateway_count] [-e edge_gw_count] [-m] [-o] [-i]"
+  echo "      Create a tyk instance in a namespace sandbox with the version given as a tag with -v"
+  echo "      -c The number of control plane gateway replicas to run. NOT YET IMPLEMENTED"
+  echo "      -C The chart to deploy. Defaults to tyk-stack which is currently the only supported option"
+  echo "      -D The size of the allocated Mongo or PG storage in GiB (default: $HSBX_PG_MAIN_DB_SIZE) NOT YET IMPLEMENTED"
+  echo "      -E A file to read environment variables from and add them all deployments. NOT YET IMPLEMENTED"
+  echo "      -N Use the given namespace name rather than the next available sandbox"
+  echo "         Useful when there's a need to import apis and policy YAML with set namespace"
+  echo "      -p Deploy with postgres not mongo. NOT YET IMPLEMENTED"
+  echo "      -P Deploy with EDP. (Implies -p)"
+  echo "      -R The size of the allocated redis control or data plane storage in GiB (default: $HSBX_REDIS_DB_SIZE) NOT YET IMPLEMENTED"
+  echo "      -t Description of the sandbox namespace"
+  echo "      -v Version tag. The file $VERSIONFILE contains the versions used"
+  echo "$name delete <sandbox namespace...>"
+  echo "      Delete the sandbox namespace given as a tag and all resources in it"
+  echo "$name info <sandbox namespace...>"
+  echo "      Print info detailed info on sandbox namespaces"
 }
 
 function listPods {
@@ -123,7 +157,7 @@ function getAllSandboxes {
 function getNamespaceNames {
   typeset namespaces
   typeset namespace
-  namespaces=""
+  namespaces=''
   for namespace in $*; do
     if ! namespaceExists $namespace; then
       if ! echo $namespace | grep -q hsandbox- ; then
@@ -270,9 +304,30 @@ function deployRedis {
 
 # fetch the redis password from the tyk-redis secret, decode it and save it into REDIS_PASSWORD
 function redisPassword {
-  REDIS_PASSWORD=$(kubectl get secret --namespace $NAMESPACE tyk-redis -o jsonpath="{.data.redis-password}" | base64 -d)
+  kubectl get secret --namespace $NAMESPACE tyk-redis -o jsonpath="{.data.redis-password}" | base64 -d
 }
 
+# deploy postgres
+function deployPostgres {
+  if ! helm list -n $NAMESPACE | grep -qw tyk-postgres; then
+    helm upgrade tyk-postgres oci://registry-1.docker.io/bitnamicharts/postgresql --set image.repository=bitnamilegacy/postgresql --set "auth.database=tyk_analytics" -n $NAMESPACE --install --version $POSTGRES_BITNAMI_CHART_VERSION > /dev/null
+    waitStatefulSetReady tyk-postgres-postgresql
+    HELM_SET_PG_CONNECTION_SECRET_NAME="--set global.postgres.connectionStringSecret.name=$PG_SERETS"
+    HELM_SET_PG_CONNECTION_SECRET_KEYNAME="--set global.postgres.connectionStringSecret.keyName=postgresConnectionString"
+  fi
+}
+
+function postgresSetupSecrets {
+  if ! kubectl get secret -n $NAMESPACE | grep -qw $PG_SERETS; then
+    POSTGRES_PASSWORD=$(postgressPassword)
+    POSTGRES_CONNECTION_STRING="user=postgres password=$POSTGRES_PASSWORD database=tyk_analytics host=tyk-postgres-postgresql port=5432"
+    kubectl create secret generic $PG_SERETS -n $NAMESPACE --from-literal=postgresConnectionString="$POSTGRES_CONNECTION_STRING"
+  fi
+}
+
+function postgressPassword {
+  kubectl get secret --namespace $NAMESPACE tyk-postgres-postgresql -o jsonpath="{.data.postgres-password}" | base64 -d
+}
 
 # deploy mongodb
 function deployMongodb {
@@ -280,19 +335,27 @@ function deployMongodb {
     helm upgrade tyk-mongo oci://registry-1.docker.io/bitnamicharts/mongodb --set image.repository=bitnamilegacy/mongodb -n $NAMESPACE --install --version $MONGO_BITNAMI_CHART_VERSION > /dev/null
     echo "[INFO]Sleeping let mongodb start"
     waitDeploymentReady tyk-mongo-mongodb
+    HELM_SET_MONGO_DRIVER="--set global.mongo.driver=mongo-go"
+    HELM_SET_MONGO_URL_SECRET_NAME="--set global.mongo.connectionURLSecret.name=$MONGODB_SECRETS"
+    HELM_SET_MONGO_URL_SECRET_KEYNAME="--set global.mongo.connectionURLSecret.keyName=mongoUrl"
   fi
 }
 
 # retrieve the mongodb secrets from the MONGODB_SECRETS decode and save into MONGODB_ROOT_PASSWORD and MONGODB_URL
-function mongoPassword {
+function mongoSetupSecrets {
   if ! kubectl get secret -n $NAMESPACE | grep -qw $MONGODB_SECRETS; then
-    MONGODB_ROOT_PASSWORD=$(kubectl get secret --namespace $NAMESPACE tyk-mongo-mongodb -o jsonpath="{.data.mongodb-root-password}" | base64 -d)
+    MONGODB_ROOT_PASSWORD=$(mongoPassword)
     MONGODB_URL="mongodb://root:$MONGODB_ROOT_PASSWORD@tyk-mongo-mongodb.$NAMESPACE.svc:27017/tyk_analytics?authSource=admin"
     if ! kubectl get secret -n $NAMESPACE | grep -qw $MONGODB_SECRETS; then
       kubectl create secret generic $MONGODB_SECRETS --from-literal=mongoUrl=$MONGODB_URL -n $NAMESPACE
     fi
   fi
 }
+
+function mongoPassword {
+  kubectl get secret --namespace $NAMESPACE tyk-mongo-mongodb -o jsonpath="{.data.mongodb-root-password}" | base64 -d
+}
+
 
 # setup EDP secrets
 function setupEDPSecrets {
@@ -320,32 +383,29 @@ function runHelm {
     --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
     --set global.secrets.useSecretName=$HSBX_TYK_K8S_SECRETS \
     --set global.components.operator=false \
-    --set global.components.devPortal=$HELM_TYKDEVPORTAL_ENABLED \
+    --set global.components.devPortal=$HELM_TYK_DEVPORTAL_ENABLED \
     --set global.storageType=$HELM_GLOBAL_STORAGETYPE \
     --set global.redis.addrs="{tyk-redis-master.$NAMESPACE.svc:6379}" \
     --set global.redis.passSecret.name=tyk-redis \
     --set global.redis.passSecret.keyName=redis-password \
-    --set global.mongo.driver=mongo-go \
-    --set global.mongo.connectionURLSecret.name=$MONGODB_SECRETS \
-    --set global.mongo.connectionURLSecret.keyName=mongoUrl \
     --set tyk-dashboard.dashboard.image.tag=$HSBX_DASH_VERS \
-    $HELM_SET_TYKDEVPORTAL_USESECRETNAME \
-    $HELM_SET_TYKDEVPORTAL_EXTRAENVS0NAME \
-    $HELM_SET_TYKDEVPORTAL_EXTRAENVS0VALUE \
-    $HELM_SET_TYKDEVPORTAL_IMAGE_TAG \
+    --set tyk-dashboard.dashboard.service.type=$HELM_TYK_DASHBOARD_SERVICE_TYPE \
+    $HELM_SET_MONGO_DRIVER \
+    $HELM_SET_MONGO_URL_SECRET_NAME \
+    $HELM_SET_MONGO_URL_SECRET_KEYNAME \
+    $HELM_SET_PG_CONNECTION_SECRET_NAME \
+    $HELM_SET_PG_CONNECTION_SECRET_KEYNAME \
+    $HELM_SET_TYK_DEVPORTAL_USESECRETNAME \
+    $HELM_SET_TYK_DEVPORTAL_EXTRAENVS0NAME \
+    $HELM_SET_TYK_DEVPORTAL_EXTRAENVS0VALUE \
+    $HELM_SET_TYK_DEVPORTAL_IMAGE_TAG \
+    $HELM_SET_TYK_DEVPORTAL_SERVICE \
     --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
+    --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
+    --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
     --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
-    --set tyk-pump.pump.backend="{$HELM_GLOBAL_STORAGETYPE}" > /dev/null
-}
-
-
-# setup services for my minikube so that I can access the network ports
-function convertClusterIPtoNodePort {
-  kubectl get service/dashboard-svc-$HELM_TYK_RELEASE_NAME-tyk-dashboard -n $NAMESPACE -o yaml | yq '.spec.type = "NodePort"' | kubectl replace -n $NAMESPACE -f -
-  kubectl get service/dev-portal-svc-$HELM_TYK_RELEASE_NAME-tyk-dev-portal -n $NAMESPACE -o yaml | yq '.spec.type = "NodePort"' | kubectl replace -n $NAMESPACE -f -
-  kubectl get service/gateway-svc-$HELM_TYK_RELEASE_NAME-tyk-gateway -n $NAMESPACE -o yaml | yq '.spec.type = "NodePort"' | kubectl replace -n $NAMESPACE -f -
-  kubectl get service/tyk-mongo-mongodb -n $NAMESPACE -o yaml | yq '.spec.type = "NodePort"' | kubectl replace -n $NAMESPACE -f -
-  kubectl get service/tyk-redis-master -n $NAMESPACE -o yaml | yq '.spec.type = "NodePort"' | kubectl replace -n $NAMESPACE -f -
+    --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
+    #--set tyk-pump.pump.backend="{$HELM_GLOBAL_STORAGETYPE}" > /dev/null
 }
 
 # report the ports to access services
@@ -381,7 +441,7 @@ if [[ $# -gt 0 ]]; then
             ;;
           D)
             # The size of the allocated Mongo or PG storage in GiB
-            HSBX_PG_MNGO_DB_SIZE=$(echo $OPTARG | tr -cd 0-9)
+            HSBX_PG_MAIN_DB_SIZE=$(echo $OPTARG | tr -cd 0-9)
             ;;
           E)
             # global environment variable file
@@ -462,7 +522,6 @@ if [[ $# -gt 0 ]]; then
         createNamespace
         # setup redis and save the passwords
         deployRedis
-        redisPassword
         if [[ -n $ENV_VAR_FILE ]]; then
           # create a config map to hold the environment variables
           echo "[INFO]Adding environment variables from $ENV_VAR_FILE to configmap sandbox-env-vars"
@@ -470,22 +529,24 @@ if [[ $# -gt 0 ]]; then
         fi
         if [[ $HSBX_DATABASE == 'mongo' ]]; then
           deployMongodb
-          mongoPassword
+          mongoSetupSecrets
           HELM_GLOBAL_STORAGETYPE="mongo"
         else
           HELM_GLOBAL_STORAGETYPE="postgres"
+          deployPostgres
+          postgresSetupSecrets
         fi
         if [[ $HSBX_ENABLE_EDP == 'true' ]]; then
-          HELM_TYKDEVPORTAL_ENABLED=true
-          HELM_SET_TYKDEVPORTAL_USESECRETNAME="--set tyk-dev-portal.useSecretName=$DEV_PORTAL_SECRET"
-          HELM_SET_TYKDEVPORTAL_EXTRAENVS0NAME='--set tyk-dev-portal.extraEnvs[0].name=PORTAL_DISABLE_CSRF_CHECK'
-          HELM_SET_TYKDEVPORTAL_EXTRAENVS0VALUE='--set tyk-dev-portal.extraEnvs[0].value=true'
-          HELM_SET_TYKDEVPORTAL_IMAGE_TAG="--set set tyk-dev-portal.image.tag=$HSBX_EDP_VERS"
+          HELM_TYK_DEVPORTAL_ENABLED=true
+          HELM_SET_TYK_DEVPORTAL_USESECRETNAME="--set tyk-dev-portal.useSecretName=$DEV_PORTAL_SECRET"
+          HELM_SET_TYK_DEVPORTAL_EXTRAENVS0NAME='--set tyk-dev-portal.extraEnvs[0].name=PORTAL_DISABLE_CSRF_CHECK'
+          HELM_SET_TYK_DEVPORTAL_EXTRAENVS0VALUE='--set tyk-dev-portal.extraEnvs[0].value=true'
+          HELM_SET_TYK_DEVPORTAL_IMAGE_TAG="--set set tyk-dev-portal.image.tag=$HSBX_EDP_VERS"
+          HELM_SET_TYK_DEVPORTAL_SERVICE="--set tyk-dev-portal.service.type=NodePort"
         else
-          HELM_TYKDEVPORTAL_ENABLED=false
+          HELM_TYK_DEVPORTAL_ENABLED=false
         fi
         runHelm
-        convertClusterIPtoNodePort
         echo "[INFO]$NAMESPACE"
         listPods
         showServices
@@ -501,7 +562,7 @@ if [[ $# -gt 0 ]]; then
         # give info on all if none given
         typeset allSandboxes
         allSandboxes=$(getAllSandboxes)
-        if [[ $allSandboxes = "" ]]; then
+        if [[ $allSandboxes = '' ]]; then
           echo "[INFO]No sandboxes configured"
           exit 0
         fi
