@@ -75,7 +75,7 @@ fi
 function help {
   typeset name
   name=$SCRIPTNAME
-  echo "[USAGE]: $name create -v <tyk version> -t <namespace description> -N <namespace name> [-p|-s] [-c gateway_count] [-e edge_gw_count] [-m] [-o] [-i]"
+  echo "[USAGE]: $name create -v <tyk version> -t <namespace description>"
   echo "      Create a tyk instance in a namespace sandbox with the version given as a tag with -v"
   echo "      -c The number of control plane gateway replicas to run. NOT YET IMPLEMENTED"
   echo "      -C The chart to deploy. Defaults to tyk-stack which is currently the only supported option"
@@ -83,7 +83,7 @@ function help {
   echo "      -E A file to read environment variables from and add them all deployments. NOT YET IMPLEMENTED"
   echo "      -N Use the given namespace name rather than the next available sandbox"
   echo "         Useful when there's a need to import apis and policy YAML with set namespace"
-  echo "      -p Deploy with postgres not mongo. NOT YET IMPLEMENTED"
+  echo "      -p Deploy with postgres not mongo"
   echo "      -P Deploy with EDP. (Implies -p)"
   echo "      -R The size of the allocated redis control or data plane storage in GiB (default: $HSBX_REDIS_DB_SIZE) NOT YET IMPLEMENTED"
   echo "      -t Description of the sandbox namespace"
@@ -296,9 +296,11 @@ function setupAdminAccountSecrets {
 # deploy redis
 function deployRedis {
   if ! helm list -n $NAMESPACE | grep -qw tyk-redis; then
-    helm upgrade tyk-redis oci://registry-1.docker.io/bitnamicharts/redis --set image.repository=bitnamilegacy/redis -n $NAMESPACE --install --version $REDIS_BITNAMI_CHART_VERSION > /dev/null
-    echo "[INFO]Sleeping to let redis start"
-    waitStatefulSetReady tyk-redis-master tyk-redis-replicas
+    echo "[INFO]Deploying Redis from bitnami/redis chart version $REDIS_BITNAMI_CHART_VERSION"
+    helm upgrade tyk-redis bitnami/redis -n $NAMESPACE --install --version $REDIS_BITNAMI_CHART_VERSION \
+      --set image.repository=bitnamilegacy/redis \
+      --set master.service.type=NodePort \
+      --set replica.service.type=NodePort > /dev/null
   fi
 }
 
@@ -310,8 +312,12 @@ function redisPassword {
 # deploy postgres
 function deployPostgres {
   if ! helm list -n $NAMESPACE | grep -qw tyk-postgres; then
-    helm upgrade tyk-postgres oci://registry-1.docker.io/bitnamicharts/postgresql --set image.repository=bitnamilegacy/postgresql --set "auth.database=tyk_analytics" -n $NAMESPACE --install --version $POSTGRES_BITNAMI_CHART_VERSION > /dev/null
-    waitStatefulSetReady tyk-postgres-postgresql
+    echo "[INFO]Deploying Postgres from bitnami/postgresql chart version $POSTGRES_BITNAMI_CHART_VERSION"
+    helm upgrade tyk-postgres bitnami/postgresql -n $NAMESPACE --install --version $POSTGRES_BITNAMI_CHART_VERSION \
+      --set image.repository=bitnamilegacy/postgresql \
+      --set "auth.database=tyk_analytics" \
+      --set primary.service.type=NodePort > /dev/null
+    # save the helm options for when installing Tyk
     HELM_SET_PG_CONNECTION_SECRET_NAME="--set global.postgres.connectionStringSecret.name=$PG_SERETS"
     HELM_SET_PG_CONNECTION_SECRET_KEYNAME="--set global.postgres.connectionStringSecret.keyName=postgresConnectionString"
   fi
@@ -332,9 +338,11 @@ function postgressPassword {
 # deploy mongodb
 function deployMongodb {
   if ! helm list -n $NAMESPACE | grep -qw tyk-mongo; then
-    helm upgrade tyk-mongo oci://registry-1.docker.io/bitnamicharts/mongodb --set image.repository=bitnamilegacy/mongodb -n $NAMESPACE --install --version $MONGO_BITNAMI_CHART_VERSION > /dev/null
-    echo "[INFO]Sleeping let mongodb start"
-    waitDeploymentReady tyk-mongo-mongodb
+    echo "[INFO]Deploying Mongodb from bitnami/mongdb chart version $MONGO_BITNAMI_CHART_VERSION"
+    helm upgrade tyk-mongo bitnami/mongodb -n $NAMESPACE --install --version $MONGO_BITNAMI_CHART_VERSION \
+      --set image.repository=bitnamilegacy/mongodb \
+      --set service.type=NodePort > /dev/null
+    # save the helm options for when installing Tyk
     HELM_SET_MONGO_DRIVER="--set global.mongo.driver=mongo-go"
     HELM_SET_MONGO_URL_SECRET_NAME="--set global.mongo.connectionURLSecret.name=$MONGODB_SECRETS"
     HELM_SET_MONGO_URL_SECRET_KEYNAME="--set global.mongo.connectionURLSecret.keyName=mongoUrl"
@@ -530,11 +538,16 @@ if [[ $# -gt 0 ]]; then
         if [[ $HSBX_DATABASE == 'mongo' ]]; then
           deployMongodb
           mongoSetupSecrets
+          # wait for the DBs to be available
+          waitStatefulSetReady tyk-redis-master tyk-redis-replicas
+          waitDeploymentReady tyk-mongo-mongodb
           HELM_GLOBAL_STORAGETYPE="mongo"
         else
           HELM_GLOBAL_STORAGETYPE="postgres"
           deployPostgres
           postgresSetupSecrets
+          # wait for the DBs to be available
+          waitStatefulSetReady tyk-redis-master tyk-redis-replicas tyk-postgres-postgresql
         fi
         if [[ $HSBX_ENABLE_EDP == 'true' ]]; then
           HELM_TYK_DEVPORTAL_ENABLED=true
