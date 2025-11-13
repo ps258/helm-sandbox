@@ -35,8 +35,8 @@ HSBX_TYK_K8S_SECRETS=tyk-system-secrets  # licences and admin secrets
 HSBX_ADMIN_ACCOUNT_SECRETS=tyk-admin-account-secrets # Admin user details
 HSBX_EDP_SECRET=tyk-EDP-secret
 HSBX_REDIS_DB_SIZE=1      # the size to make the redis persistent volume claim for both control plane and edge deployment
-HSBX_PG_MAIN_DB_SIZE=5    # the size to make the mongo or postgresql DB persistent volume claim
-HSBX_PG_PORTAL_THEMES_SIZE=2   # the size to make EDP's /opt/portal/themes volume for storing themes
+HSBX_MAIN_DB_SIZE=5       # the size to make the mongo or postgresql DB persistent volume claim
+HSBX_PORTAL_THEMES_SIZE=2 # the size to make EDP's /opt/portal/themes volume for storing themes
 HSBX_CHART=tyk-stack
 REDIS_PASSWORD=''
 MONGODB_SECRETS=mongourl-secrets
@@ -55,11 +55,10 @@ HELM_SET_MONGO_URL_SECRET_KEYNAME=''
 HELM_SET_PG_CONNECTION_SECRET_NAME=''
 HELM_SET_PG_CONNECTION_SECRET_KEYNAME=''
 
-
 HELM_TYK_RELEASE_NAME=tykstack
-REDIS_BITNAMI_CHART_VERSION=19.0.2
-MONGO_BITNAMI_CHART_VERSION=15.1.3
-POSTGRES_BITNAMI_CHART_VERSION=12.12.10
+#REDIS_BITNAMI_CHART_VERSION="--version 19.0.2"
+#MONGO_BITNAMI_CHART_VERSION="--version 15.1.3"
+#POSTGRES_BITNAMI_CHART_VERSION="--version 12.12.10"
 ADMIN_EMAIL=''
 ADMIN_PASSWORD=''
 
@@ -79,13 +78,13 @@ function help {
   echo "      Create a tyk instance in a namespace sandbox with the version given as a tag with -v"
   echo "      -c The number of control plane gateway replicas to run. NOT YET IMPLEMENTED"
   echo "      -C The chart to deploy. Defaults to tyk-stack which is currently the only supported option"
-  echo "      -D The size of the allocated Mongo or PG storage in GiB (default: $HSBX_PG_MAIN_DB_SIZE) NOT YET IMPLEMENTED"
+  echo "      -D The size of the allocated Mongo or PG storage in Gi (default: ${HSBX_MAIN_DB_SIZE}Gi)"
   echo "      -E A file to read environment variables from and add them all deployments. NOT YET IMPLEMENTED"
   echo "      -N Use the given namespace name rather than the next available sandbox"
   echo "         Useful when there's a need to import apis and policy YAML with set namespace"
   echo "      -p Deploy with postgres not mongo"
   echo "      -P Deploy with EDP. (Implies -p)"
-  echo "      -R The size of the allocated redis control or data plane storage in GiB (default: $HSBX_REDIS_DB_SIZE) NOT YET IMPLEMENTED"
+  echo "      -R The size of the allocated redis control or data plane storage in Gi (default: ${HSBX_REDIS_DB_SIZE}Gi)"
   echo "      -t Description of the sandbox namespace"
   echo "      -v Version tag. The file $VERSIONFILE contains the versions used"
   echo "$name delete <sandbox namespace...>"
@@ -296,9 +295,11 @@ function setupAdminAccountSecrets {
 # deploy redis
 function deployRedis {
   if ! helm list -n $NAMESPACE | grep -qw tyk-redis; then
-    echo "[INFO]Deploying Redis from bitnami/redis chart version $REDIS_BITNAMI_CHART_VERSION"
-    helm upgrade tyk-redis bitnami/redis -n $NAMESPACE --install --version $REDIS_BITNAMI_CHART_VERSION \
+    echo "[INFO]Deploying Redis from bitnami/redis chart $REDIS_BITNAMI_CHART_VERSION"
+    helm upgrade tyk-redis bitnami/redis -n $NAMESPACE --install $REDIS_BITNAMI_CHART_VERSION \
       --set image.repository=bitnamilegacy/redis \
+      --set master.persistence.size=${HSBX_REDIS_DB_SIZE}Gi \
+      --set replica.persistence.size=${HSBX_REDIS_DB_SIZE}Gi \
       --set master.service.type=NodePort \
       --set replica.service.type=NodePort > /dev/null
   fi
@@ -312,10 +313,12 @@ function redisPassword {
 # deploy postgres
 function deployPostgres {
   if ! helm list -n $NAMESPACE | grep -qw tyk-postgres; then
-    echo "[INFO]Deploying Postgres from bitnami/postgresql chart version $POSTGRES_BITNAMI_CHART_VERSION"
-    helm upgrade tyk-postgres bitnami/postgresql -n $NAMESPACE --install --version $POSTGRES_BITNAMI_CHART_VERSION \
+    echo "[INFO]Deploying Postgres from bitnami/postgresql chart $POSTGRES_BITNAMI_CHART_VERSION"
+    helm upgrade tyk-postgres bitnami/postgresql -n $NAMESPACE --install $POSTGRES_BITNAMI_CHART_VERSION \
       --set image.repository=bitnamilegacy/postgresql \
       --set "auth.database=tyk_analytics" \
+      --set primary.persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
+      --set readReplicas.persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
       --set primary.service.type=NodePort > /dev/null
     # save the helm options for when installing Tyk
     HELM_SET_PG_CONNECTION_SECRET_NAME="--set global.postgres.connectionStringSecret.name=$PG_SERETS"
@@ -338,9 +341,11 @@ function postgressPassword {
 # deploy mongodb
 function deployMongodb {
   if ! helm list -n $NAMESPACE | grep -qw tyk-mongo; then
-    echo "[INFO]Deploying Mongodb from bitnami/mongdb chart version $MONGO_BITNAMI_CHART_VERSION"
-    helm upgrade tyk-mongo bitnami/mongodb -n $NAMESPACE --install --version $MONGO_BITNAMI_CHART_VERSION \
+    echo "[INFO]Deploying Mongodb from bitnami/mongdb chart $MONGO_BITNAMI_CHART_VERSION"
+    helm upgrade tyk-mongo bitnami/mongodb -n $NAMESPACE --install $MONGO_BITNAMI_CHART_VERSION \
       --set image.repository=bitnamilegacy/mongodb \
+      --set persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
+      --set backup.cronjob.storage.size=${HSBX_MAIN_DB_SIZE}Gi \
       --set service.type=NodePort > /dev/null
     # save the helm options for when installing Tyk
     HELM_SET_MONGO_DRIVER="--set global.mongo.driver=mongo-go"
@@ -386,6 +391,7 @@ function installTykHelmRepo {
 }
 
 function runHelm {
+  echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE"
   helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
     --install \
     --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
@@ -414,6 +420,17 @@ function runHelm {
     --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
     --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
     #--set tyk-pump.pump.backend="{$HELM_GLOBAL_STORAGETYPE}" > /dev/null
+}
+
+# Sometimes PersistentVolumeClaim are left when the namespace is deleted.
+# Tidy up any in state 'Released'
+# This happens most when minikube is stopped and restarted
+function tidyReleasedPVCs {
+  typeset pvc
+  for pvc in $(kubectl get pv --no-headers=true 2>/dev/null | awk '$5=="Released" {print $1}'); do
+    echo "[INFO]kubectl delete pv $pvc"
+    kubectl delete pv $pvc
+  done
 }
 
 # report the ports to access services
@@ -449,7 +466,7 @@ if [[ $# -gt 0 ]]; then
             ;;
           D)
             # The size of the allocated Mongo or PG storage in GiB
-            HSBX_PG_MAIN_DB_SIZE=$(echo $OPTARG | tr -cd 0-9)
+            HSBX_MAIN_DB_SIZE=$(echo $OPTARG | tr -cd 0-9)
             ;;
           E)
             # global environment variable file
@@ -604,6 +621,7 @@ if [[ $# -gt 0 ]]; then
           kubectl delete namespace $NAMESPACE --wait
         fi
       done
+      tidyReleasedPVCs
       ;;
     :)
       echo "[FATAL]Option -$OPTARG requires an arguement."
