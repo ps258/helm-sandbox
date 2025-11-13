@@ -34,9 +34,10 @@ HSBX_PGDB=tyk_analytics    # default postgres database
 HSBX_TYK_K8S_SECRETS=tyk-system-secrets  # licences and admin secrets
 HSBX_ADMIN_ACCOUNT_SECRETS=tyk-admin-account-secrets # Admin user details
 HSBX_EDP_SECRET=tyk-EDP-secret
-HSBX_REDIS_DB_SIZE=1      # the size to make the redis persistent volume claim for both control plane and edge deployment
-HSBX_MAIN_DB_SIZE=5       # the size to make the mongo or postgresql DB persistent volume claim
-HSBX_PORTAL_THEMES_SIZE=2 # the size to make EDP's /opt/portal/themes volume for storing themes
+HSBX_REDIS_REPLICAS=0     # the number of redis replicas to run. It slows creation of a sandbox significantly to have these enabled
+HSBX_REDIS_DB_SIZE=1      # the size to make the redis PVC for both control plane and edge deployment
+HSBX_MAIN_DB_SIZE=5       # the size to make the mongo or postgresql DB PVC
+HSBX_PORTAL_THEMES_SIZE=2 # the size to make EDP's /opt/portal/themes volume for storing themes (not implemented yet)
 HSBX_CHART=tyk-stack
 REDIS_PASSWORD=''
 MONGODB_SECRETS=mongourl-secrets
@@ -300,6 +301,7 @@ function deployRedis {
       --set image.repository=bitnamilegacy/redis \
       --set master.persistence.size=${HSBX_REDIS_DB_SIZE}Gi \
       --set replica.persistence.size=${HSBX_REDIS_DB_SIZE}Gi \
+      --set replica.replicaCount=$HSBX_REDIS_REPLICAS \
       --set master.service.type=NodePort \
       --set replica.service.type=NodePort > /dev/null
   fi
