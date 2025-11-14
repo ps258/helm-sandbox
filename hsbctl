@@ -25,7 +25,7 @@ HSBX_DEVPORTAL_PORTAL_SECRET=secrets-${HELM_TYK_RELEASE_NAME}-tyk-dev-portal
 HSBX_TYK_K8S_SECRETS=tyk-system-secrets  # licences and admin secrets
 HSBX_ADMIN_ACCOUNT_SECRETS=tyk-admin-account-secrets # Admin user details
 MONGODB_SECRETS=mongourl-secrets
-PG_SERETS=postgres-secrets
+POSTGRES_SECRETS=postgres-secrets
 
 NAMESPACE=''
 HSBX_DATABASE=mongo
@@ -40,9 +40,8 @@ HSBX_MDCB_VERS=''
 HSBX_DEVPORTAL_VERS=''
 HSBX_MDCB_LICENCE=''
 HSBX_VALUES_FILE=''
-HSBX_PGPASSWORD=password   # default postgres password
-HSBX_PGUSER=postgresx      # default postgres username
-HSBX_PGDB=tyk_analytics    # default postgres database
+HSBX_PGUSER=postgres      # default postgres username
+HSBX_PGDB=tyk_analytics   # default postgres database
 HSBX_REDIS_REPLICAS=0     # the number of redis replicas to run. It slows creation of a sandbox significantly to have these enabled
 HSBX_REDIS_DB_SIZE=1      # the size to make the redis PVC for both control plane and edge deployment
 HSBX_MAIN_DB_SIZE=5       # the size to make the mongo or postgresql DB PVC
@@ -96,6 +95,8 @@ else
   ADMIN_EMAIL=$SBX_USER
   ADMIN_PASSWORD=$(echo -n $SBX_PASSWORD | base64 -d)
 fi
+
+IP=$(minikube ip)
 
 function help {
   typeset name
@@ -228,8 +229,12 @@ function loadVersions {
   HSBX_GATE_VERS=$(echo $HSBX_GATE_VERS | sed 's/~/-/g')
   HSBX_DASH_VERS="v${dshbVers%%-1}"
   HSBX_PUMP_VERS="v${pumpVers%%-1}"
-  HSBX_DEVPORTAL_VERS="v${EDPvers%%-1}"
-  HSBX_MDCB_VERS="v${MDCBvers%%-1}"
+  if [[ $HSBX_ENABLE_DEVPORTAL == "true" ]]; then
+    HSBX_DEVPORTAL_VERS="v${EDPvers%%-1}"
+  fi
+  if [[ $HSBX_TYPE == 'tyk-control-plane' ]]; then
+    HSBX_MDCB_VERS="v${MDCBvers%%-1}"
+  fi
 }
 
 function getMinikubeIP {
@@ -280,10 +285,11 @@ function createNamespace {
       echo "  HSBX_DEVPORTAL: $HSBX_DEVPORTAL_VERS" >> $configYAML
     fi
     echo "  HSBX_TYPE: $HSBX_TYPE" >> $configYAML
-    if [[ $HSBX_TYPE == 'pro' || $HSBX_TYPE == 'mdcb' ]]; then
+    if [[ $HSBX_CHART == 'tyk-stack'  || $HSBX_TYPE == 'tyk-control-plane' ]]; then
       echo "  HSBX_DATABASE: $HSBX_DATABASE" >> $configYAML
     fi
     echo "  HSBX_DESCRIPTION: \"$HSBX_DESCRIPTION\"" >> $configYAML
+    echo "  HSBX_CHART: \"$HSBX_CHART\"" >> $configYAML
     echo "kind: ConfigMap" >> $configYAML
     echo "metadata:" >> $configYAML
     echo "  namespace: \"$NAMESPACE\"" >> $configYAML
@@ -334,7 +340,7 @@ function deployRedis {
 }
 
 # fetch the redis password from the tyk-redis secret, decode it and save it into REDIS_PASSWORD
-function redisPassword {
+function getRedisPassword {
   kubectl get secret --namespace $NAMESPACE tyk-redis -o jsonpath="{.data.redis-password}" | base64 -d
 }
 
@@ -349,20 +355,20 @@ function deployPostgres {
       --set readReplicas.persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
       --set primary.service.type=NodePort > /dev/null
     # save the helm options for when installing Tyk
-    HELM_SET_PG_CONNECTION_SECRET_NAME="--set global.postgres.connectionStringSecret.name=$PG_SERETS"
+    HELM_SET_PG_CONNECTION_SECRET_NAME="--set global.postgres.connectionStringSecret.name=$POSTGRES_SECRETS"
     HELM_SET_PG_CONNECTION_SECRET_KEYNAME="--set global.postgres.connectionStringSecret.keyName=postgresConnectionString"
   fi
 }
 
 function postgresSetupSecrets {
-  if ! kubectl get secret -n $NAMESPACE | grep -qw $PG_SERETS; then
-    POSTGRES_PASSWORD=$(postgressPassword)
+  if ! kubectl get secret -n $NAMESPACE | grep -qw $POSTGRES_SECRETS; then
+    POSTGRES_PASSWORD=$(getPostgressPassword)
     POSTGRES_CONNECTION_STRING="user=postgres password=$POSTGRES_PASSWORD database=tyk_analytics host=tyk-postgres-postgresql port=5432"
-    kubectl create secret generic $PG_SERETS -n $NAMESPACE --from-literal=postgresConnectionString="$POSTGRES_CONNECTION_STRING"
+    kubectl create secret generic $POSTGRES_SECRETS -n $NAMESPACE --from-literal=postgresConnectionString="$POSTGRES_CONNECTION_STRING"
   fi
 }
 
-function postgressPassword {
+function getPostgressPassword {
   kubectl get secret --namespace $NAMESPACE tyk-postgres-postgresql -o jsonpath="{.data.postgres-password}" | base64 -d
 }
 
@@ -425,7 +431,6 @@ function installTykHelmRepo {
 function runHelm {
   if [[ -z $HSBX_VALUES_FILE ]]; then
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE"
-    set -x
     helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
       --install \
       --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
@@ -457,12 +462,174 @@ function runHelm {
       --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
       --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
       --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
-    set +x
   else
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
     helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
       --install \
       -f $HSBX_VALUES_FILE
+  fi
+}
+
+# return the description of the sandbox which is stored in sandbox-details when the sandbox was created
+function getDescription {
+  kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_DESCRIPTION
+}
+
+# return the chart used to create the sandbox
+function getChart {
+  kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_CHART
+}
+
+function getDashboardPort {
+  kubectl get svc -n $NAMESPACE dashboard-svc-tykstack-tyk-dashboard --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+}
+
+function getPortalPort {
+  kubectl get svc -n $NAMESPACE dev-portal-svc-tykstack-tyk-dev-portal --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+}
+
+function getControlGatewayPort {
+  kubectl get svc -n $NAMESPACE gateway-svc-tykstack-tyk-gateway --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+}
+
+function getPostgresPort {
+  kubectl get svc -n $NAMESPACE tyk-postgres-postgresql --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+}
+
+function getControlRedisPort {
+  kubectl get svc -n $NAMESPACE tyk-redis-master --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+}
+
+# check if we're on Mongodb or Postgresql
+function getDatabaseType {
+  HSBX_DATABASE=$(kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_DATABASE)
+}
+
+# the mongo shell can be called 'mongo' or 'mongosh' so check for both
+function checkMongoShellInstalled {
+  if [[ -z $MONGOSHELL ]]; then
+    if ! which mongo >/dev/null; then
+      alias mongo=mongosh
+      MONGOSHELL=mongosh
+      if ! which mongosh > /dev/null; then
+        echo "[WARN]Mongo shell 'mongo' and 'mongosh' are not installed. Will not be able to mongo data"
+      fi
+    else
+      MONGOSHELL=mongo
+    fi
+  fi
+}
+
+# report the tyk versions saved in the namespace configmap sandbox-details when it was created
+function showTykVersions {
+  typeset key; typeset value; typeset report; typeset sandboxDetails; typeset description
+  sandboxDetails=$(kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data)
+  report=''
+  for key in HSBX_DATABASE HSBX_MDCB HSBX_PMP HSBX_GW HSBX_DB HSBX_TYPE HSBX_VERSION HSBX_EDP; do
+    value=$(echo $sandboxDetails | jq -r .$key)
+    if [[ $value != 'null' ]]; then
+      report="$report $key=$value"
+    fi
+  done
+  echo $report
+}
+
+function reportSanboxInfo {
+  typeset https
+  # envs to hold ssh port forwarding details for when we're on EC2
+  typeset ssh_dashboard; typeset dashboard_port
+  typeset ssh_edp; typeset edp_port
+  typeset ssh_control_gateway; typeset control_gateway_port
+  typeset ssh_mdcb; typeset mdcb_port
+  typeset ssh_edge_gateway; typeset edge_gateway_port
+  typeset ssh_mongodb; typeset mongodb_port
+  typeset ssh_postgres; typeset postgres_port
+  typeset ssh_control_redis; typeset control_redis_port
+  typeset ssh_edge_redis; typeset edge_redis_port
+  typeset ssh_standalone_gateway; typeset standalone_gateway_port
+  typeset ssh_hybrid_gateway; typeset hybrid_gateway_port
+  typeset ssh_hybrid_redis; typeset hybrid_redis_port
+  typeset display_IP
+  HSBX_CHART=$(getChart)
+  if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
+    display_IP=localhost
+  else
+    display_IP=$IP
+  fi
+  echo "$NAMESPACE.Description:       $(getDescription)"
+  if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_TYPE == 'tyk-control-plane' ]]; then
+    dashboard_port=$(getDashboardPort)
+    ssh_dashboard="-L localhost:$dashboard_port:$IP:$dashboard_port"
+    echo "$NAMESPACE.dashboard:         http://$display_IP:$dashboard_port/"
+    if [[ $HSBX_HAS_EDP != "null" ]]; then
+      edp_port=$(getPortalPort)
+      ssh_edp="-L localhost:$edp_port:$IP:$edp_port"
+      echo "$NAMESPACE.portal:            http://$display_IP:$edp_port/"
+    fi
+    control_gateway_port=$(getControlGatewayPort)
+    ssh_control_gateway="-L localhost:$control_gateway_port:$IP:$control_gateway_port"
+    echo "$NAMESPACE.control-gateway:   http://$display_IP:$control_gateway_port/"
+    if [[ $HSBX_TYPE == 'tyk-control-plane' ]]; then
+      mdcb_port=$(getMDCBPort)
+      ssh_mdcb="-L localhost:$mdcb_port:$IP:$mdcb_port"
+      echo "$NAMESPACE.MDCBport:          $display_IP:$mdcb_port"
+      https=$(kubectl get deploy edge-gateway -n $NAMESPACE -o json | jq -r .metadata.labels.https)
+      edge_gateway_port=$(getEdgeGatewayPort)
+      ssh_edge_gateway="-L localhost:$edge_gateway_port:$IP:$edge_gateway_port"
+      if [[ $https == 'true' ]]; then
+        echo "$NAMESPACE.edge-gateway:      https://$display_IP:$edge_gateway_port/"
+      else
+        echo "$NAMESPACE.edge-gateway:      http://$display_IP:$edge_gateway_port/"
+      fi
+    fi
+    if [[ $HSBX_DATABASE == 'mongo' ]]; then
+      checkMongoShellInstalled
+      mongodb_port=$(getMongoPort)
+      ssh_mongodb="-L localhost:$mongodb_port:$IP:$mongodb_port"
+      echo "$NAMESPACE.mongo:             $MONGOSHELL --quiet mongodb://$display_IP:$mongodb_port/tyk_analytics"
+    fi
+    if [[ $HSBX_DATABASE == 'postgres' ]]; then
+      postgres_port=$(getPostgresPort)
+      ssh_postgres="-L localhost:$postgres_port:$IP:$postgres_port"
+      echo "$NAMESPACE.postgres:          PGPASSWORD=$(getPostgressPassword) psql --username=$HSBX_PGUSER --dbname=$HSBX_PGDB --host=$display_IP --port=$postgres_port"
+    fi
+    control_redis_port=$(getControlRedisPort)
+    ssh_control_redis="-L localhost:$control_redis_port:$IP:$control_redis_port"
+    if [[ $HSBX_TYPE == "mdcb" ]]; then
+      edge_redis_port=$(getEdgeRedisPort)
+      ssh_edge_redis="-L localhost:$edge_redis_port:$IP:$edge_redis_port"
+      echo "$NAMESPACE.control-redis:     REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $display_IP -p $control_redis_port"
+      echo "$NAMESPACE.edge-redis:        redis-cli -h $display_IP -p $edge_redis_port"
+    else
+      echo "$NAMESPACE.control-redis:     REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $display_IP -p $control_redis_port"
+    fi
+    echo "$NAMESPACE.AdminKey:          $(getAdminUserKey)"
+    echo "$NAMESPACE.OrgID:             $(getOrgID)"
+  elif [[ $HSBX_TYPE == "standalone" ]]; then
+    standalone_gateway_port=$(getStandaloneGatewayPort)
+    ssh_standalone_gateway="-L localhost:$standalone_gateway_port:$IP:$standalone_gateway_port"
+    echo "$NAMESPACE.gateway:   http://$display_IP:$standalone_gateway_port/"
+    control_redis_port=$(getControlRedisPort)
+    ssh_control_redis="-L localhost:$control_redis_port:$IP:$control_redis_port"
+    echo "$NAMESPACE.redis:     redis-cli -h $display_IP -p $control_redis_port"
+  elif [[ $HSBX_TYPE == "hybrid" ]]; then
+    hybrid_gateway_port=$(getHybridGatewayPort)
+    ssh_hybrid_gateway="-L localhost:$hybrid_gateway_port:$IP:$hybrid_gateway_port"
+    echo "$NAMESPACE.gateway:           http://$display_IP:$hybrid_gateway_port/"
+    hybrid_redis_port=$(getHybridRedisPort)
+    ssh_hybrid_redis="-L localhost:$hybrid_redis_port:$IP:$hybrid_redis_port"
+    echo "$NAMESPACE.redis:             redis-cli -h $display_IP -p $hybrid_redis_port"
+  fi
+  if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
+    # report the ssh command to map the service ports back to localhost
+    echo "$NAMESPACE.ssh                $(echo ssh $ssh_dashboard $ssh_edp $ssh_control_gateway $ssh_mdcb $ssh_edge_gateway $ssh_mongodb $ssh_postgres $ssh_control_redis $ssh_edge_redis $ssh_standalone_gateway $ssh_hybrid_gateway $ssh_hybrid_redis) <aws hostname>"
+  fi
+
+  # if the namespace has the label 'istio-injection=enabled' then report the istio-system services
+  if kubectl get ns --show-labels --no-headers=true $NAMESPACE | grep -q $ISTIO_INJECTION_LABEL; then
+    echo "Kiali:                        http://$IP:$(kubectl get svc -n istio-system kiali --no-headers=true | awk -F '[:/ ]+' '{print $6}')/"
+    echo "Grafana:                      http://$IP:$(kubectl get svc -n istio-system grafana --no-headers=true | awk -F '[:/ ]+' '{print $6}')/"
+    echo "Tracing:                      http://$IP:$(kubectl get svc -n istio-system tracing --no-headers=true | awk -F '[:/ ]+' '{print $6}')/"
   fi
 }
 
@@ -514,7 +681,6 @@ function showServices {
   else
     catcmd=cat
   fi
-  IP=$(minikube ip)
   kubectl get svc -n $NAMESPACE | awk '/NodePort/ {print $1, $5}' | while read svc port; do
     port=$(echo $port | cut -d: -f2 | cut -d/ -f1)
     echo "$svc -> http://$IP:$port"
@@ -670,7 +836,6 @@ if [[ $# -gt 0 ]]; then
         echo "[FATAL]Namespace $NAMESPACE already exists"
         exit 1
       fi
-
       ;;
     info)
       shift
@@ -686,8 +851,12 @@ if [[ $# -gt 0 ]]; then
       fi
       for NAMESPACE in $(getNamespaceNames $*); do
         if namespaceExists $NAMESPACE; then
+          # set HSBX_DATABASE for this namespace
+          getDatabaseType
           echo "[INFO]$NAMESPACE"
+          showTykVersions
           listPods
+          reportSanboxInfo
           showServices
           echo
         else
