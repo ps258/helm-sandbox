@@ -13,7 +13,20 @@ SCRIPTDIR=$(
 )
 SCRIPTNAME=$(basename $SCRIPTNAME)
 VERSIONFILE="$SCRIPTDIR/tyk-versions.list"
+
 NAMESPACE_SELECTOR_LABEL="creator=hsbctl"
+HELM_TYK_RELEASE_NAME=tykstack
+
+# secret things and places to store secrets
+HSBX_ADMIN_SECRET=admin_secret
+HSBX_GATE_SECRET=Secret
+# this is hard coded in the chart. See TT-16036
+HSBX_DEVPORTAL_PORTAL_SECRET=secrets-${HELM_TYK_RELEASE_NAME}-tyk-dev-portal
+HSBX_TYK_K8S_SECRETS=tyk-system-secrets  # licences and admin secrets
+HSBX_ADMIN_ACCOUNT_SECRETS=tyk-admin-account-secrets # Admin user details
+MONGODB_SECRETS=mongourl-secrets
+PG_SERETS=postgres-secrets
+
 NAMESPACE=''
 HSBX_DATABASE=mongo
 HSBX_DESCRIPTION='N/A'
@@ -21,33 +34,39 @@ HSBX_GATE_VERS=''
 HSBX_GATE_PLUGIN_DIR=''
 HSBX_GATE_EE=''
 HSBX_DASH_VERS=''
-HSBX_ENABLE_EDP=false
+HSBX_ENABLE_DEVPORTAL=false
 HSBX_PUMP_VERS=''
 HSBX_MDCB_VERS=''
-HSBX_EDP_VERS=''
-HSBX_MDCB_LICENSE=''
-HSBX_ADMIN_SECRET=admin_secret
-HSBX_GATE_SECRET=Secret
+HSBX_DEVPORTAL_VERS=''
+HSBX_MDCB_LICENCE=''
+HSBX_VALUES_FILE=''
 HSBX_PGPASSWORD=password   # default postgres password
 HSBX_PGUSER=postgresx      # default postgres username
 HSBX_PGDB=tyk_analytics    # default postgres database
-HSBX_TYK_K8S_SECRETS=tyk-system-secrets  # licences and admin secrets
-HSBX_ADMIN_ACCOUNT_SECRETS=tyk-admin-account-secrets # Admin user details
-HSBX_EDP_SECRET=tyk-EDP-secret
 HSBX_REDIS_REPLICAS=0     # the number of redis replicas to run. It slows creation of a sandbox significantly to have these enabled
 HSBX_REDIS_DB_SIZE=1      # the size to make the redis PVC for both control plane and edge deployment
 HSBX_MAIN_DB_SIZE=5       # the size to make the mongo or postgresql DB PVC
 HSBX_PORTAL_THEMES_SIZE=2 # the size to make EDP's /opt/portal/themes volume for storing themes (not implemented yet)
 HSBX_CHART=tyk-stack
 REDIS_PASSWORD=''
-MONGODB_SECRETS=mongourl-secrets
-PG_SERETS=postgres-secrets
 
 # set the services to NodePort
 HELM_TYK_GATEWAY_SERVICE_TYPE=NodePort
 HELM_TYK_GATEWAY_CONTROL_TYPE=NodePort
 HELM_TYK_PUMP_SERVICE_TYPE=NodePort
 HELM_TYK_DASHBOARD_SERVICE_TYPE=NodePort
+
+# when adding extra envs we need to know what array index we're up to so we need to keep track of those
+# the convention is to use this value then increment it
+HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX=0
+HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX=0
+HELM_TYK_PUMP_EXTRAENVS_NEXT_INDEX=0
+HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX=0
+# These are the variables for keeping all of the extra envs in
+HELM_SET_TYK_DASHBOARD_EXTRAENVS=''
+HELM_SET_TYK_GATEWAY_EXTRAENVS=''
+HELM_SET_TYK_PUMP_EXTRAENVS=''
+HELM_SET_TYK_DEVPORTAL_EXTRAENVS=''
 
 HELM_SET_MONGO_DRIVER=''
 HELM_SET_MONGO_URL_SECRET_NAME=''
@@ -56,7 +75,6 @@ HELM_SET_MONGO_URL_SECRET_KEYNAME=''
 HELM_SET_PG_CONNECTION_SECRET_NAME=''
 HELM_SET_PG_CONNECTION_SECRET_KEYNAME=''
 
-HELM_TYK_RELEASE_NAME=tykstack
 #REDIS_BITNAMI_CHART_VERSION="--version 19.0.2"
 #MONGO_BITNAMI_CHART_VERSION="--version 15.1.3"
 #POSTGRES_BITNAMI_CHART_VERSION="--version 12.12.10"
@@ -68,8 +86,15 @@ if [[ -f ~/.tyk-sandbox ]]; then
   . ~/.tyk-sandbox
 else
   SBX_LICENSE=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGxvd2VkX25vZGVzIjoiNjk0NWIwMWMtZWU5NS00YWZmLTQ1ZWEtOTkxMTgzZjZlNWY2LDQwMTlmZWY0LTM5NzktNDJiZi00ZDFmLTAxMTFkMGUxMDUwMCw1Y2E4NjhmNC1iMzAyLTQyMjUtNmY5Zi1kNTIwNjllOGIyMzQsNjI5NWFiZjktYTNmOC00Y2RjLTVmMDQtY2I4MjRiMDhhMDU5LGRlOWYzMjAxLTdkMTUtNDVhYS03NDE1LTEzZmVhYjEzY2U3ZSxmMjdiZGFlMi05MDUwLTRmMGQtNTIxMy0xZWI0YjI3YjAyOGEsOTVjMGY2YzMtYzFjNS00OGJmLTUzNDktMTY3NmNiOWM5Y2U0LGUzMjYxYjRiLWJlODctNDVhZi03NzhiLWViYTViMDQ5YmE3ZCwzNWE2NjYxMi1hYjgwLTQ0MTktNDFhNS01NmZmZmZiMjYxN2EsMmFlYjJkODEtYjE3MC00MTNiLTUzYjEtOTA5NTE0NTRhZTRiIiwiZXhwIjoxNzQ2NjYyMzk5LCJoaWQiOiJwZXRlci5zIiwiaWF0IjoxNzQ0MDIwMjQ3LCJsaWNlbnNlX3R5cGUiOiJpbnRlcm5hbCIsIm93bmVyIjoiNjFjY2U2MmMxMjFjYTEwMDAxOGJiMTkwIiwic2NvcGUiOiJtdWx0aV90ZWFtLHJiYWMsZ3JhcGgsZmVkZXJhdGlvbixzdHJlYW1zLHRyYWNrIiwidiI6IjIifQ.YtjKFa_m13RNDHloUBMcYGB1TG82LIX9XOmSEhYkIQVTPKxvV0h2oZRuYMui9oDyauzEcrc7jzU9bZAvL4acXX74D7oq_f0_rV_rWBR9abQlEO5wZ2RGaLn2qO-XiA-vYQtzXiNfKDFMLrAOmLCHuH8zDkg4Rs4mBJ9d8MQ8EbcD_pFXpgVsP7haEWgLnojEFzeN9HoDTc2JnXV3UmFi67KN8OwcMczmERNzDPzTa12JhC37R029SA6dru2Q0BzGa_P8VoIMFvoLtXCHExrUAAbH_ZvA_6wF-0As4JN4LsQ0u4I5HZ4ELSt0kdgX7GbO7QiMNWmlvvytQwKDRmgQog
-  SBX_USER=user@admin.com
-  SBX_PASSWORD=ABC-123
+fi
+
+# take the ADMIN_EMAIL and ADMIN_PASSWORD from ~/.tyk-sandbox if defined
+if [[ -z $SBX_USER ]]; then
+  ADMIN_EMAIL=user@admin.com
+  ADMIN_PASSWORD=ABC-123
+else
+  ADMIN_EMAIL=$SBX_USER
+  ADMIN_PASSWORD=$(echo -n $SBX_PASSWORD | base64 -d)
 fi
 
 function help {
@@ -87,7 +112,8 @@ function help {
   echo "      -P Deploy with EDP. (Implies -p)"
   echo "      -R The size of the allocated redis control or data plane storage in Gi (default: ${HSBX_REDIS_DB_SIZE}Gi)"
   echo "      -t Description of the sandbox namespace"
-  echo "      -v Version tag. The file $VERSIONFILE contains the versions used"
+  echo "      -V values.yaml file to use instead of other options. Note this overrides all other Tyk options"
+  echo "      -v Version tag. The file $VERSIONFILE contains the versions of each product used"
   echo "$name delete <sandbox namespace...>"
   echo "      Delete the sandbox namespace given as a tag and all resources in it"
   echo "$name info <sandbox namespace...>"
@@ -202,7 +228,7 @@ function loadVersions {
   HSBX_GATE_VERS=$(echo $HSBX_GATE_VERS | sed 's/~/-/g')
   HSBX_DASH_VERS="v${dshbVers%%-1}"
   HSBX_PUMP_VERS="v${pumpVers%%-1}"
-  HSBX_EDP_VERS="v${EDPvers%%-1}"
+  HSBX_DEVPORTAL_VERS="v${EDPvers%%-1}"
   HSBX_MDCB_VERS="v${MDCBvers%%-1}"
 }
 
@@ -250,8 +276,8 @@ function createNamespace {
     if [[ -n $HSBX_MDCB_VERS ]]; then
       echo "  HSBX_MDCB: $HSBX_MDCB_VERS" >> $configYAML
     fi
-    if [[ -n $HSBX_EDP_VERS ]]; then
-      echo "  HSBX_EDP: $HSBX_EDP_VERS" >> $configYAML
+    if [[ -n $HSBX_DEVPORTAL_VERS ]]; then
+      echo "  HSBX_DEVPORTAL: $HSBX_DEVPORTAL_VERS" >> $configYAML
     fi
     echo "  HSBX_TYPE: $HSBX_TYPE" >> $configYAML
     if [[ $HSBX_TYPE == 'pro' || $HSBX_TYPE == 'mdcb' ]]; then
@@ -371,12 +397,16 @@ function mongoPassword {
   kubectl get secret --namespace $NAMESPACE tyk-mongo-mongodb -o jsonpath="{.data.mongodb-root-password}" | base64 -d
 }
 
-
-# setup EDP secrets
-function setupEDPSecrets {
-  if ! kubectl get secret -n $NAMESPACE | grep -qw $HSBX_EDP_PORTAL_SECRET; then
-    kubectl create secret generic $HSBX_EDP_PORTAL_SECRET -n $NAMESPACE \
-      --from-literal=DevPortalDatabaseConnectionString=db/portal.db \
+# setup EDP secrets 
+# adminUserEmail in this secret is ignored by the bootstrap and default@example.com is used instead
+# BUT you can use the below in the helm command to set the admin email for portal
+# --set global.adminUser.email=$ADMIN_EMAIL
+function setupDevPortalSecrets {
+  if ! kubectl get secret -n $NAMESPACE | grep -qw $HSBX_DEVPORTAL_PORTAL_SECRET; then
+    kubectl create secret generic $HSBX_DEVPORTAL_PORTAL_SECRET -n $NAMESPACE \
+      --from-literal=DevPortalDatabaseConnectionString="$POSTGRES_CONNECTION_STRING" \
+      --from-literal=adminUserEmail=$ADMIN_EMAIL \
+      --from-literal=adminUserPassword=$ADMIN_PASSWORD \
       --from-literal=DevPortalLicense=$SBX_LICENSE
       # these cant be used until TT-14957 is fixed
       #    --from-literal=adminUserFirstName=Admin_first \
@@ -393,35 +423,47 @@ function installTykHelmRepo {
 }
 
 function runHelm {
-  echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE"
-  helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
-    --install \
-    --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
-    --set global.secrets.useSecretName=$HSBX_TYK_K8S_SECRETS \
-    --set global.components.operator=false \
-    --set global.components.devPortal=$HELM_TYK_DEVPORTAL_ENABLED \
-    --set global.storageType=$HELM_GLOBAL_STORAGETYPE \
-    --set global.redis.addrs="{tyk-redis-master.$NAMESPACE.svc:6379}" \
-    --set global.redis.passSecret.name=tyk-redis \
-    --set global.redis.passSecret.keyName=redis-password \
-    --set tyk-dashboard.dashboard.image.tag=$HSBX_DASH_VERS \
-    --set tyk-dashboard.dashboard.service.type=$HELM_TYK_DASHBOARD_SERVICE_TYPE \
-    $HELM_SET_MONGO_DRIVER \
-    $HELM_SET_MONGO_URL_SECRET_NAME \
-    $HELM_SET_MONGO_URL_SECRET_KEYNAME \
-    $HELM_SET_PG_CONNECTION_SECRET_NAME \
-    $HELM_SET_PG_CONNECTION_SECRET_KEYNAME \
-    $HELM_SET_TYK_DEVPORTAL_USESECRETNAME \
-    $HELM_SET_TYK_DEVPORTAL_EXTRAENVS0NAME \
-    $HELM_SET_TYK_DEVPORTAL_EXTRAENVS0VALUE \
-    $HELM_SET_TYK_DEVPORTAL_IMAGE_TAG \
-    $HELM_SET_TYK_DEVPORTAL_SERVICE \
-    --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
-    --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
-    --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
-    --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
-    --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
-    #--set tyk-pump.pump.backend="{$HELM_GLOBAL_STORAGETYPE}" > /dev/null
+  if [[ -z $HSBX_VALUES_FILE ]]; then
+    echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE"
+    set -x
+    helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
+      --install \
+      --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
+      --set global.adminUser.email=$ADMIN_EMAIL \
+      --set global.secrets.useSecretName=$HSBX_TYK_K8S_SECRETS \
+      --set global.components.operator=false \
+      --set global.components.devPortal=$HELM_TYK_DEVPORTAL_ENABLED \
+      --set global.storageType=$HELM_GLOBAL_STORAGETYPE \
+      --set global.redis.addrs="{tyk-redis-master.$NAMESPACE.svc:6379}" \
+      --set global.redis.passSecret.name=tyk-redis \
+      --set global.redis.passSecret.keyName=redis-password \
+      --set tyk-dashboard.dashboard.image.tag=$HSBX_DASH_VERS \
+      --set tyk-dashboard.dashboard.service.type=$HELM_TYK_DASHBOARD_SERVICE_TYPE \
+      $HELM_SET_MONGO_DRIVER \
+      $HELM_SET_MONGO_URL_SECRET_NAME \
+      $HELM_SET_MONGO_URL_SECRET_KEYNAME \
+      $HELM_SET_PG_CONNECTION_SECRET_NAME \
+      $HELM_SET_PG_CONNECTION_SECRET_KEYNAME \
+      $HELM_SET_TYK_DEVPORTAL_USESECRETNAME \
+      $HELM_SET_TYK_DEVPORTAL_SERVICE \
+      $HELM_SET_TYK_DEVPORTAL_IMAGE_TAG \
+      $HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT \
+      $HELM_SET_TYK_DASHBOARD_EXTRAENVS \
+      $HELM_SET_TYK_GATEWAY_EXTRAENVS \
+      $HELM_SET_TYK_PUMP_EXTRAENVS \
+      $HELM_SET_TYK_DEVPORTAL_EXTRAENVS \
+      --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
+      --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
+      --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
+      --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
+      --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
+    set +x
+  else
+    echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
+    helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
+      --install \
+      -f $HSBX_VALUES_FILE
+  fi
 }
 
 # Sometimes PersistentVolumeClaim are left when the namespace is deleted.
@@ -432,6 +474,35 @@ function tidyReleasedPVCs {
   for pvc in $(kubectl get pv --no-headers=true 2>/dev/null | awk '$5=="Released" {print $1}'); do
     echo "[INFO]kubectl delete pv $pvc"
     kubectl delete pv $pvc
+  done
+}
+
+# reads an file containing normal var=val and converts it into 'extraEnvs' for the helm commandline
+function setEnvVars {
+  typeset filename
+  typeset line
+  typeset variable
+  typeset value
+  filename="$1"
+  cat "$filename" | while read -r line; do
+    variable=$(echo $line | cut -d= -f1)
+    value=$(echo $line | cut -d= -f2)
+    # Dashboard first
+    HELM_SET_TYK_DASHBOARD_EXTRAENVS="$HELM_SET_TYK_DASHBOARD_EXTRAENVS --set tyk-dashboard.dashboard.extraEnvs[$HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX].name=$variable"
+    HELM_SET_TYK_DASHBOARD_EXTRAENVS="$HELM_SET_TYK_DASHBOARD_EXTRAENVS --set tyk-dashboard.dashboard.extraEnvs[$HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX].value=$value"
+    let HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX+=1
+    # Gateway next
+    HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-gateway.gateway.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].name=$variable"
+    HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-gateway.gateway.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].value=$value"
+    let HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX+=1
+    # Pump next
+    HELM_SET_TYK_PUMP_EXTRAENVS="$HELM_SET_TYK_PUMP_EXTRAENVS --set tyk-pump.pump.extraEnvs[$HELM_TYK_PUMP_EXTRAENVS_NEXT_INDEX].name=$variable"
+    HELM_SET_TYK_PUMP_EXTRAENVS="$HELM_SET_TYK_PUMP_EXTRAENVS --set tyk-pump.pump.extraEnvs[$HELM_TYK_PUMP_EXTRAENVS_NEXT_INDEX].value=$value"
+    let HELM_TYK_PUMP_EXTRAENVS_NEXT_INDEX+=1
+    # Dev Portal next
+    HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].name=$variable"
+    HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=$value"
+    let HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX+=1
   done
 }
 
@@ -455,7 +526,7 @@ if [[ $# -gt 0 ]]; then
   case $1 in 
     create)
       shift
-      while getopts :C:D:E:N:PpR:t:v: arg; do
+      while getopts :C:D:E:N:PpR:t:V:v: arg; do
         case $arg in
           c)
             # the number of control gateways to deploy (these are also just gateways in the pro install)
@@ -473,10 +544,11 @@ if [[ $# -gt 0 ]]; then
           E)
             # global environment variable file
             ENV_VAR_FILE=$OPTARG
-            if [[ ! -f $ENV_VAR_FILE ]]; then
+            if [[ ! -f "$ENV_VAR_FILE" ]]; then
               echo "[FATAL]Cannot read environment variable file: '$ENV_VAR_FILE'"
               exit 1
             fi
+            setEnvVars "$ENV_VAR_FILE"
             ;;
           N)
             # specify a particular namespace
@@ -485,7 +557,7 @@ if [[ $# -gt 0 ]]; then
           P)
             # deploy EDP must deploy PG as well then
             HSBX_DATABASE=postgres
-            HSBX_ENABLE_EDP=true
+            HSBX_ENABLE_DEVPORTAL=true
             ;;
           p)
             # use postgresql not mongodb
@@ -499,6 +571,14 @@ if [[ $# -gt 0 ]]; then
           t)
             # the description of the namespace or sandbox
             HSBX_DESCRIPTION="$OPTARG"
+            ;;
+          V)
+            # A values.yaml file to use when deploying the Tyk chart
+            HSBX_VALUES_FILE=$OPTARG
+            if [[ ! -f "$HSBX_VALUES_FILE" ]]; then
+              echo "[FATAL]Cannot read values file: '$HSBX_VALUES_FILE'"
+              exit 1
+            fi
             ;;
           v)
             # the base version to use to look up the versions of each of the products
@@ -538,8 +618,8 @@ if [[ $# -gt 0 ]]; then
           if [[ -n $HSBX_MDCB_VERS ]]; then
             echo -n ", MDCB $HSBX_MDCB_VERS"
           fi
-          if [[ -n $HSBX_EDP_VERS ]]; then
-            echo -n ", EDP $HSBX_EDP_VERS"
+          if [[ -n $HSBX_DEVPORTAL_VERS ]]; then
+            echo -n ", EDP $HSBX_DEVPORTAL_VERS"
           fi
           echo
         else
@@ -568,13 +648,17 @@ if [[ $# -gt 0 ]]; then
           # wait for the DBs to be available
           waitStatefulSetReady tyk-redis-master tyk-redis-replicas tyk-postgres-postgresql
         fi
-        if [[ $HSBX_ENABLE_EDP == 'true' ]]; then
+        if [[ $HSBX_ENABLE_DEVPORTAL == 'true' ]]; then
+          setupDevPortalSecrets
           HELM_TYK_DEVPORTAL_ENABLED=true
-          HELM_SET_TYK_DEVPORTAL_USESECRETNAME="--set tyk-dev-portal.useSecretName=$DEV_PORTAL_SECRET"
-          HELM_SET_TYK_DEVPORTAL_EXTRAENVS0NAME='--set tyk-dev-portal.extraEnvs[0].name=PORTAL_DISABLE_CSRF_CHECK'
-          HELM_SET_TYK_DEVPORTAL_EXTRAENVS0VALUE='--set tyk-dev-portal.extraEnvs[0].value=true'
-          HELM_SET_TYK_DEVPORTAL_IMAGE_TAG="--set set tyk-dev-portal.image.tag=$HSBX_EDP_VERS"
+          HELM_SET_TYK_DEVPORTAL_USESECRETNAME="--set tyk-dev-portal.useSecretName=$HSBX_DEVPORTAL_PORTAL_SECRET"
+          HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].name=PORTAL_DISABLE_CSRF_CHECK"
+          HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=true"
+          # remember to increment HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX so that we keep in sync
+          let HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX+=1
+          HELM_SET_TYK_DEVPORTAL_IMAGE_TAG="--set tyk-dev-portal.image.tag=$HSBX_DEVPORTAL_VERS"
           HELM_SET_TYK_DEVPORTAL_SERVICE="--set tyk-dev-portal.service.type=NodePort"
+          HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT="--set tyk-dev-portal.database.dialect=postgres"
         else
           HELM_TYK_DEVPORTAL_ENABLED=false
         fi
