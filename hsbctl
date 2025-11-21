@@ -16,13 +16,15 @@ VERSIONFILE="$SCRIPTDIR/tyk-versions.list"
 
 NAMESPACE_SELECTOR_LABEL="creator=hsbctl"
 ISTIO_INJECTION_LABEL='istio-injection=enabled'
-HELM_TYK_RELEASE_NAME=tykstack
+HELM_TYKSTACK_RELEASE_NAME=tykstack
+HELM_TYKCONTROLPLANE_RELEASE_NAME=tykcontrolplane
+HELM_DATAPLANE_RELEASE_NAME=tykdataplane
 
 # secret things and places to store secrets
 HSBX_ADMIN_SECRET=admin_secret
 HSBX_GATE_SECRET=Secret
 # this is hard coded in the chart. See TT-16036
-HSBX_DEVPORTAL_PORTAL_SECRET=secrets-${HELM_TYK_RELEASE_NAME}-tyk-dev-portal
+HSBX_DEVPORTAL_PORTAL_SECRET=tyk-devportal-secrets
 HSBX_TYK_K8S_SECRETS=tyk-system-secrets  # licences and admin secrets
 HSBX_ADMIN_ACCOUNT_SECRETS=tyk-admin-account-secrets # Admin user details
 MONGODB_SECRETS=mongourl-secrets
@@ -120,8 +122,12 @@ function help {
   echo "      -v Version tag. The file $VERSIONFILE contains the versions of each product used"
   echo "$name delete <sandbox namespace...>"
   echo "      Delete the sandbox namespace given as a tag and all resources in it"
+  echo "$name get <sandbox namespace...> [description|dashboard|control-gw|control-redis|edge-gw|edge-redis|key|mdcb|mongo|postgres|orgid|values]"
+  echo "      Print the requested detail in a way that's useful in another script"
+  echo "      Only 'values' is currently implemented"
   echo "$name info <sandbox namespace...>"
   echo "      Print info detailed info on sandbox namespaces"
+
 }
 
 function listPods {
@@ -461,7 +467,7 @@ function saveOrgAndAdminKey {
 function runHelm {
   if [[ -z $HSBX_VALUES_FILE ]]; then
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE"
-    helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
+    helm upgrade $HELM_TYKSTACK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
       --install \
       --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
       --set global.adminUser.email=$ADMIN_EMAIL \
@@ -496,7 +502,7 @@ function runHelm {
       --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
   else
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
-    helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
+    helm upgrade $HELM_TYKSTACK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
       --install \
       -f $HSBX_VALUES_FILE
   fi
@@ -521,6 +527,20 @@ function getAdminUserKey {
   kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_ADMIN_KEY
 }
 
+function getHelmRelease {
+  case $(getChart) in
+    tyk-stack)
+      echo $HELM_TYKSTACK_RELEASE_NAME
+      ;;
+    tyk-control-plane)
+      echo $HELM_TYKCONTROLPLANE_RELEASE_NAME
+      ;;
+    tyk-data-plane)
+      echo $HELM_DATAPLANE_RELEASE_NAME
+      ;;
+  esac
+}
+    
 function getOrgID {
   kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_ORGID
 }
@@ -915,6 +935,18 @@ if [[ $# -gt 0 ]]; then
           echo "[WARN]Namespace '$NAMESPACE' not found"
         fi
       done
+      ;;
+    get)
+      shift
+      NAMESPACE=$(getNamespaceNames $1)
+      shift
+      case $1 in
+        [Vv]alues)
+          helmRelease=$(getHelmRelease)
+          echo [INFO]helm get values $(getHelmRelease) -n $NAMESPACE
+          helm get values $(getHelmRelease) -n $NAMESPACE
+          ;;
+      esac
       ;;
     rm | del*)
       shift
