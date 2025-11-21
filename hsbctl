@@ -31,6 +31,7 @@ POSTGRES_SECRETS=postgres-secrets
 NAMESPACE=''
 HSBX_DATABASE=mongo
 HSBX_DESCRIPTION='N/A'
+HSBX_GATE_USE_HTTPS=false
 HSBX_GATE_VERS=''
 HSBX_GATE_PLUGIN_DIR=''
 HSBX_GATE_EE=''
@@ -108,6 +109,7 @@ function help {
   echo "      -C The chart to deploy. Defaults to tyk-stack which is currently the only supported option"
   echo "      -D The size of the allocated Mongo or PG storage in Gi (default: ${HSBX_MAIN_DB_SIZE}Gi)"
   echo "      -E A file to read environment variables from and add them all deployments"
+  echo "      -h Enable https on gateways"
   echo "      -N Use the given namespace name rather than the next available sandbox"
   echo "         Useful when there's a need to import apis and policy YAML with set namespace"
   echo "      -p Deploy with postgres not mongo"
@@ -291,6 +293,7 @@ function createNamespace {
     fi
     echo "  HSBX_DESCRIPTION: \"$HSBX_DESCRIPTION\"" >> $configYAML
     echo "  HSBX_CHART: \"$HSBX_CHART\"" >> $configYAML
+    echo "  HSBX_GATE_USE_HTTPS: \"$HSBX_GATE_USE_HTTPS\"" >> $configYAML
     echo "kind: ConfigMap" >> $configYAML
     echo "metadata:" >> $configYAML
     echo "  namespace: \"$NAMESPACE\"" >> $configYAML
@@ -389,18 +392,28 @@ function deployMongodb {
   fi
 }
 
+function getMongoInternalURL {
+    MONGODB_ROOT_PASSWORD=$(getMongoPassword)
+    echo "mongodb://root:$MONGODB_ROOT_PASSWORD@tyk-mongo-mongodb.$NAMESPACE.svc:27017/tyk_analytics?authSource=admin"
+}
+
+function getMongoExternalURL {
+  typeset ip; ip=$1
+  typeset port; port=$2
+  MONGODB_ROOT_PASSWORD=$(getMongoPassword)
+  echo "mongodb://root:$MONGODB_ROOT_PASSWORD@$ip:$port/tyk_analytics?authSource=admin"
+}
+
 # retrieve the mongodb secrets from the MONGODB_SECRETS decode and save into MONGODB_ROOT_PASSWORD and MONGODB_URL
 function mongoSetupSecrets {
   if ! kubectl get secret -n $NAMESPACE | grep -qw $MONGODB_SECRETS; then
-    MONGODB_ROOT_PASSWORD=$(mongoPassword)
-    MONGODB_URL="mongodb://root:$MONGODB_ROOT_PASSWORD@tyk-mongo-mongodb.$NAMESPACE.svc:27017/tyk_analytics?authSource=admin"
     if ! kubectl get secret -n $NAMESPACE | grep -qw $MONGODB_SECRETS; then
       kubectl create secret generic $MONGODB_SECRETS --from-literal=mongoUrl=$MONGODB_URL -n $NAMESPACE
     fi
   fi
 }
 
-function mongoPassword {
+function getMongoPassword {
   kubectl get secret --namespace $NAMESPACE tyk-mongo-mongodb -o jsonpath="{.data.mongodb-root-password}" | base64 -d
 }
 
@@ -448,6 +461,7 @@ function saveOrgAndAdminKey {
 function runHelm {
   if [[ -z $HSBX_VALUES_FILE ]]; then
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE"
+    set -x
     helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
       --install \
       --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
@@ -459,6 +473,7 @@ function runHelm {
       --set global.redis.addrs="{tyk-redis-master.$NAMESPACE.svc:6379}" \
       --set global.redis.passSecret.name=tyk-redis \
       --set global.redis.passSecret.keyName=redis-password \
+      --set global.tls.gateway=$HSBX_GATE_USE_HTTPS \
       --set tyk-dashboard.dashboard.image.tag=$HSBX_DASH_VERS \
       --set tyk-dashboard.dashboard.service.type=$HELM_TYK_DASHBOARD_SERVICE_TYPE \
       $HELM_SET_MONGO_DRIVER \
@@ -480,6 +495,7 @@ function runHelm {
       $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
       --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
       --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
+    set +x
   else
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
     helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
@@ -510,6 +526,9 @@ function getAdminUserKey {
 function getOrgID {
   kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_ORGID
 }
+function getHTTPS {
+  kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_GATE_USE_HTTPS
+}
 
 function getDashboardPort {
   kubectl get svc -n $NAMESPACE dashboard-svc-tykstack-tyk-dashboard --no-headers=true | awk -F '[:/ ]+' '{print $6}'
@@ -525,6 +544,10 @@ function getControlGatewayPort {
 
 function getPostgresPort {
   kubectl get svc -n $NAMESPACE tyk-postgres-postgresql --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+}
+
+function getMongoPort {
+  kubectl get svc -n $NAMESPACE tyk-mongo-mongodb --no-headers=true | awk -F '[:/ ]+' '{print $6}'
 }
 
 function getControlRedisPort {
@@ -583,6 +606,7 @@ function reportSanboxInfo {
   typeset display_IP
   HSBX_CHART=$(getChart)
   HSBX_HAS_EDP=$(getEDPversion)
+  https=$(getHTTPS)
   if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
     display_IP=localhost
   else
@@ -600,7 +624,11 @@ function reportSanboxInfo {
     fi
     control_gateway_port=$(getControlGatewayPort)
     ssh_control_gateway="-L localhost:$control_gateway_port:$IP:$control_gateway_port"
-    echo "$NAMESPACE.control-gateway:   http://$display_IP:$control_gateway_port/"
+    if [[ $https == "true" ]]; then
+      echo "$NAMESPACE.control-gateway:   https://$display_IP:$control_gateway_port/"
+    else
+      echo "$NAMESPACE.control-gateway:   http://$display_IP:$control_gateway_port/"
+    fi
     if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
       mdcb_port=$(getMDCBPort)
       ssh_mdcb="-L localhost:$mdcb_port:$IP:$mdcb_port"
@@ -618,7 +646,7 @@ function reportSanboxInfo {
       checkMongoShellInstalled
       mongodb_port=$(getMongoPort)
       ssh_mongodb="-L localhost:$mongodb_port:$IP:$mongodb_port"
-      echo "$NAMESPACE.mongo:             $MONGOSHELL --quiet mongodb://$display_IP:$mongodb_port/tyk_analytics"
+      echo "$NAMESPACE.mongo:             $MONGOSHELL --quiet $(getMongoExternalURL $display_IP $mongodb_port)"
     fi
     if [[ $HSBX_DATABASE == 'postgres' ]]; then
       postgres_port=$(getPostgresPort)
@@ -709,7 +737,7 @@ if [[ $# -gt 0 ]]; then
   case $1 in 
     create)
       shift
-      while getopts :C:c:D:E:N:PpR:t:V:v: arg; do
+      while getopts :C:c:D:E:hN:PpR:t:V:v: arg; do
         case $arg in
           c)
             # the number of control gateways to deploy (these are also just gateways in the pro install)
@@ -732,6 +760,9 @@ if [[ $# -gt 0 ]]; then
               exit 1
             fi
             setEnvVars "$ENV_VAR_FILE"
+            ;;
+          h)
+            HSBX_GATE_USE_HTTPS=true
             ;;
           N)
             # specify a particular namespace
@@ -834,16 +865,22 @@ if [[ $# -gt 0 ]]; then
           setupDevPortalSecrets
           HELM_TYK_DEVPORTAL_ENABLED=true
           HELM_SET_TYK_DEVPORTAL_USESECRETNAME="--set tyk-dev-portal.useSecretName=$HSBX_DEVPORTAL_PORTAL_SECRET"
+          HELM_SET_TYK_DEVPORTAL_IMAGE_TAG="--set tyk-dev-portal.image.tag=$HSBX_DEVPORTAL_VERS"
+          HELM_SET_TYK_DEVPORTAL_SERVICE="--set tyk-dev-portal.service.type=NodePort"
+          HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT="--set tyk-dev-portal.database.dialect=postgres"
+          # set PORTAL_DISABLE_CSRF_CHECK=true by default
           HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].name=PORTAL_DISABLE_CSRF_CHECK"
           HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=true"
           # remember to increment HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX so that we keep in sync
           let HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX+=1
-          HELM_SET_TYK_DEVPORTAL_IMAGE_TAG="--set tyk-dev-portal.image.tag=$HSBX_DEVPORTAL_VERS"
-          HELM_SET_TYK_DEVPORTAL_SERVICE="--set tyk-dev-portal.service.type=NodePort"
-          HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT="--set tyk-dev-portal.database.dialect=postgres"
         else
           HELM_TYK_DEVPORTAL_ENABLED=false
         fi
+        # turn on TYK_GW_ENABLEHASHEDKEYSLISTING=true because the chart doesn't do that
+        HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].name=TYK_GW_ENABLEHASHEDKEYSLISTING"
+        HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].value=true"
+        # remember to increment HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX so that we keep in sync
+        let HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX+=1
         runHelm
         saveOrgAndAdminKey
         echo "[INFO]$NAMESPACE"
