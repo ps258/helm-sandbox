@@ -24,7 +24,8 @@ HELM_DATAPLANE_RELEASE_NAME=tykdataplane
 HSBX_ADMIN_SECRET=admin_secret
 HSBX_GATE_SECRET=Secret
 # this is hard coded in the chart. See TT-16036
-HSBX_DEVPORTAL_PORTAL_SECRET=tyk-devportal-secrets
+# we set it in function setupDevPortalSecrets
+HSBX_DEVPORTAL_PORTAL_SECRET=""
 HSBX_TYK_K8S_SECRETS=tyk-system-secrets  # licences and admin secrets
 HSBX_ADMIN_ACCOUNT_SECRETS=tyk-admin-account-secrets # Admin user details
 MONGODB_SECRETS=mongourl-secrets
@@ -428,6 +429,7 @@ function getMongoPassword {
 # BUT you can use the below in the helm command to set the admin email for portal
 # --set global.adminUser.email=$ADMIN_EMAIL
 function setupDevPortalSecrets {
+  HSBX_DEVPORTAL_PORTAL_SECRET=secrets-$(getHelmRelease)-tyk-dev-portal
   if ! kubectl get secret -n $NAMESPACE | grep -qw $HSBX_DEVPORTAL_PORTAL_SECRET; then
     kubectl create secret generic $HSBX_DEVPORTAL_PORTAL_SECRET -n $NAMESPACE \
       --from-literal=DevPortalDatabaseConnectionString="$POSTGRES_CONNECTION_STRING" \
@@ -528,7 +530,10 @@ function getAdminUserKey {
 }
 
 function getHelmRelease {
-  case $(getChart) in
+  if [[ -n $HSBX_CHART ]]; then
+    HSBX_CHART=$(getChart)
+  fi
+  case $HSBX_CHART in
     tyk-stack)
       echo $HELM_TYKSTACK_RELEASE_NAME
       ;;
