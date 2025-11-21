@@ -408,7 +408,7 @@ function getMongoExternalURL {
 function mongoSetupSecrets {
   if ! kubectl get secret -n $NAMESPACE | grep -qw $MONGODB_SECRETS; then
     if ! kubectl get secret -n $NAMESPACE | grep -qw $MONGODB_SECRETS; then
-      kubectl create secret generic $MONGODB_SECRETS --from-literal=mongoUrl=$MONGODB_URL -n $NAMESPACE
+      kubectl create secret generic $MONGODB_SECRETS --from-literal=mongoUrl=$(getMongoInternalURL) -n $NAMESPACE
     fi
   fi
 }
@@ -461,7 +461,6 @@ function saveOrgAndAdminKey {
 function runHelm {
   if [[ -z $HSBX_VALUES_FILE ]]; then
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE"
-    set -x
     helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
       --install \
       --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
@@ -495,7 +494,6 @@ function runHelm {
       $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
       --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
       --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
-    set +x
   else
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
     helm upgrade $HELM_TYK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
