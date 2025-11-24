@@ -123,7 +123,7 @@ function help {
   echo "      -v Version tag. The file $VERSIONFILE contains the versions of each product used"
   echo "$name delete <sandbox namespace...>"
   echo "      Delete the sandbox namespace given as a tag and all resources in it"
-  echo "$name get <sandbox namespace...> [description|dashboard|control-gw|control-redis|edge-gw|edge-redis|key|mdcb|mongo|postgres|orgid|values]"
+  echo "$name get <sandbox namespace...> [chart|release|description|dashboard|control-gw|control-redis|control-redis-password|control-redis-port|edge-gw|edge-redis|key|mdcb|mongo|postgres|orgid|values]"
   echo "      Print the requested detail in a way that's useful in another script"
   echo "      Only 'values' is currently implemented"
   echo "$name info <sandbox namespace...>"
@@ -351,7 +351,7 @@ function deployRedis {
 }
 
 # fetch the redis password from the tyk-redis secret, decode it and save it into REDIS_PASSWORD
-function getRedisPassword {
+function getControlRedisPassword {
   kubectl get secret --namespace $NAMESPACE tyk-redis -o jsonpath="{.data.redis-password}" | base64 -d
 }
 
@@ -457,7 +457,7 @@ function saveOrgAndAdminKey {
   typeset adminRedisKey
   typeset adminAccessKey
   typeset orgID
-  redisPassword=$(getRedisPassword)
+  redisPassword=$(getControlRedisPassword)
   redisPort=$(getControlRedisPort)
   adminRedisKey=$(echo keys tyk-admin-api\* | REDISCLI_AUTH=$redisPassword redis-cli --raw -h $IP -p $redisPort | head -1)
   adminAccessKey=$(echo get $adminRedisKey | REDISCLI_AUTH=$redisPassword redis-cli --raw -h $IP -p $redisPort | jq -r .UserData.access_key)
@@ -681,10 +681,10 @@ function reportSanboxInfo {
     if [[ $HSBX_CHART == "tyk-control-plane" ]]; then
       edge_redis_port=$(getEdgeRedisPort)
       ssh_edge_redis="-L localhost:$edge_redis_port:$IP:$edge_redis_port"
-      echo "$NAMESPACE.control-redis:     REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $display_IP -p $control_redis_port"
+      echo "$NAMESPACE.control-redis:     REDISCLI_AUTH=$(getControlRedisPassword) redis-cli -h $display_IP -p $control_redis_port"
       echo "$NAMESPACE.edge-redis:        redis-cli -h $display_IP -p $edge_redis_port"
     else
-      echo "$NAMESPACE.control-redis:     REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $display_IP -p $control_redis_port"
+      echo "$NAMESPACE.control-redis:     REDISCLI_AUTH=$(getControlRedisPassword) redis-cli -h $display_IP -p $control_redis_port"
     fi
     echo "$NAMESPACE.AdminKey:          $(getAdminUserKey)"
     echo "$NAMESPACE.OrgID:             $(getOrgID)"
@@ -951,6 +951,39 @@ if [[ $# -gt 0 ]]; then
           echo [INFO]helm get values $(getHelmRelease) -n $NAMESPACE
           helm get values $(getHelmRelease) -n $NAMESPACE
           ;;
+        [Dd]escription)
+          getDescription
+          ;;
+        [Dd]ashboard)
+          echo "http://$IP:$(getDashboardPort)/"
+          ;;
+        [Cc]control-gateway|[Gg]ateway)
+          if [[ $(getHTTPS) == 'true' ]]; then
+            echo "https://$IP:$(getControlGatewayPort)/"
+          else
+            echo "http://$IP:$(getControlGatewayPort)/"
+          fi
+          ;;
+        [Cc]ontrol-redis-password)
+          echo $(getControlRedisPassword)
+          ;;
+        [Cc]ontrol-redis-port)
+          getControlRedisPort
+          ;;
+        [Cc]ontrol-redis)
+          echo "REDISCLI_AUTH=$(getControlRedisPassword) redis-cli -h $IP -p $(getControlRedisPort)"
+          ;;
+        [Cc]hart)
+          getChart
+          ;;
+        [Rr]elease)
+          getHelmRelease
+          ;;
+        *)
+          echo "[FATAL]get $1 not implemented"
+          help
+          exit 1
+          ;;
       esac
       ;;
     rm | del*)
@@ -966,6 +999,31 @@ if [[ $# -gt 0 ]]; then
         fi
       done
       tidyReleasedPVCs
+      ;;
+    version*)
+      shift
+      if [[ $# -lt 1 ]]; then
+        # give info on all if none given
+        typeset allSandboxes
+        allSandboxes=$(getAllSandboxes)
+        if [[ $allSandboxes = "" ]]; then
+          echo "[INFO]No sandboxes configured"
+          exit 0
+        fi
+        set $allSandboxes
+      fi
+      for NAMESPACE in $(getNamespaceNames $*); do
+        echo "[INFO]$NAMESPACE deployed versions"
+        for deployment in $(kubectl get deploy --no-headers=true -n $NAMESPACE | awk '{print $1}'); do
+          echo "   $deployment: $(kubectl get deploy $deployment -n $NAMESPACE -o yaml | yq ".spec.template.spec.containers.[].image" | xargs)"
+        done | sort
+        echo
+      done
+      ;;
+    *)
+      echo "[FATAL]$1 not implemented"
+      help
+      exit 1
       ;;
     :)
       echo "[FATAL]Option -$OPTARG requires an arguement."
