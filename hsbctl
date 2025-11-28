@@ -59,6 +59,7 @@ HELM_TYK_GATEWAY_SERVICE_TYPE=NodePort
 HELM_TYK_GATEWAY_CONTROL_TYPE=NodePort
 HELM_TYK_PUMP_SERVICE_TYPE=NodePort
 HELM_TYK_DASHBOARD_SERVICE_TYPE=NodePort
+HELM_TYK_MDCB_SERVICE_TYPE=NodePort
 
 # when adding extra envs we need to know what array index we're up to so we need to keep track of those
 # the convention is to use this value then increment it
@@ -90,6 +91,7 @@ if [[ -f ~/.tyk-sandbox ]]; then
   . ~/.tyk-sandbox
 else
   SBX_LICENSE=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGxvd2VkX25vZGVzIjoiNjk0NWIwMWMtZWU5NS00YWZmLTQ1ZWEtOTkxMTgzZjZlNWY2LDQwMTlmZWY0LTM5NzktNDJiZi00ZDFmLTAxMTFkMGUxMDUwMCw1Y2E4NjhmNC1iMzAyLTQyMjUtNmY5Zi1kNTIwNjllOGIyMzQsNjI5NWFiZjktYTNmOC00Y2RjLTVmMDQtY2I4MjRiMDhhMDU5LGRlOWYzMjAxLTdkMTUtNDVhYS03NDE1LTEzZmVhYjEzY2U3ZSxmMjdiZGFlMi05MDUwLTRmMGQtNTIxMy0xZWI0YjI3YjAyOGEsOTVjMGY2YzMtYzFjNS00OGJmLTUzNDktMTY3NmNiOWM5Y2U0LGUzMjYxYjRiLWJlODctNDVhZi03NzhiLWViYTViMDQ5YmE3ZCwzNWE2NjYxMi1hYjgwLTQ0MTktNDFhNS01NmZmZmZiMjYxN2EsMmFlYjJkODEtYjE3MC00MTNiLTUzYjEtOTA5NTE0NTRhZTRiIiwiZXhwIjoxNzQ2NjYyMzk5LCJoaWQiOiJwZXRlci5zIiwiaWF0IjoxNzQ0MDIwMjQ3LCJsaWNlbnNlX3R5cGUiOiJpbnRlcm5hbCIsIm93bmVyIjoiNjFjY2U2MmMxMjFjYTEwMDAxOGJiMTkwIiwic2NvcGUiOiJtdWx0aV90ZWFtLHJiYWMsZ3JhcGgsZmVkZXJhdGlvbixzdHJlYW1zLHRyYWNrIiwidiI6IjIifQ.YtjKFa_m13RNDHloUBMcYGB1TG82LIX9XOmSEhYkIQVTPKxvV0h2oZRuYMui9oDyauzEcrc7jzU9bZAvL4acXX74D7oq_f0_rV_rWBR9abQlEO5wZ2RGaLn2qO-XiA-vYQtzXiNfKDFMLrAOmLCHuH8zDkg4Rs4mBJ9d8MQ8EbcD_pFXpgVsP7haEWgLnojEFzeN9HoDTc2JnXV3UmFi67KN8OwcMczmERNzDPzTa12JhC37R029SA6dru2Q0BzGa_P8VoIMFvoLtXCHExrUAAbH_ZvA_6wF-0As4JN4LsQ0u4I5HZ4ELSt0kdgX7GbO7QiMNWmlvvytQwKDRmgQog
+  SBX_MDCB_LICENSE=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJTS1UiOiJUeWstTURDQi1FTlQiLCJleHAiOjE3NjU1ODM5OTksImhpZCI6InBldGVyLnMiLCJsaWNlbnNlX3R5cGUiOiJpbnRlcm5hbCIsIm93bmVyIjoiNjZiNjNiNDZlM2M0ZDUwMDAxNzM5NGIyIn0.gKvhBXt3wM5_zyrqYTX4zxCbdlqUmpjEooy9_SB8Bq5HGfS6hE6jFXVzJNbh3xTrXMEx3EUKJTa0oZI2So1ojEJUARrNy6w9iP03yu1rvoFs3zz_7m2RHWOBiHkL_xI7eXrt0OKXMDTapGixEJoOoEeRzQkz_OZU4CDrNKbgefjNuwq6wWxdV4Yd7P59H25MvnKDuj_XgOIqPcxLKDaF1rODT_1zCyEW4IvGRJd5EIOXjkDMrFb-K-KWyQr9isfNy0VSSsSeYZ1FiXGW-dMu_LOOiDQ1oJqDVsrBBjymf3Pf1kvcUQkvCey2lWJscZgFNRKkIU4mmUzT1MHIQIE_Vw
 fi
 
 # take the ADMIN_EMAIL and ADMIN_PASSWORD from ~/.tyk-sandbox if defined
@@ -109,7 +111,10 @@ function help {
   echo "[USAGE]: $name create -v <tyk version> -t <namespace description>"
   echo "      Create a tyk instance in a namespace sandbox with the version given as a tag with -v"
   echo "      -c The number of control plane gateway replicas to run"
-  echo "      -C The chart to deploy. Defaults to tyk-stack which is currently the only supported option"
+  echo "      -C The chart to deploy. Defaults to tyk-stack"
+  echo "         Supported charts are:"
+  echo "         tyk-stack"
+  echo "         tyk-control-plane"
   echo "      -D The size of the allocated Mongo or PG storage in Gi (default: ${HSBX_MAIN_DB_SIZE}Gi)"
   echo "      -E A file to read environment variables from and add them all deployments"
   echo "      -h Enable https on gateways"
@@ -321,7 +326,9 @@ function setupTykSystemSecrets {
       --from-literal=AdminSecret=$HSBX_ADMIN_SECRET \
       --from-literal=DashLicense=$SBX_LICENSE \
       --from-literal=DevPortalLicense=$SBX_LICENSE \
-      --from-literal=OperatorLicense=$SBX_LICENSE
+      --from-literal=OperatorLicense=$SBX_LICENSE \
+      --from-literal=securitySecret=$HSBX_GATE_SECRET \
+      --from-literal=MDCBLicense=$SBX_MDCB_LICENSE
   fi
 }
 
@@ -469,7 +476,14 @@ function saveOrgAndAdminKey {
 function runHelm {
   if [[ -z $HSBX_VALUES_FILE ]]; then
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE"
-    helm upgrade $HELM_TYKSTACK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
+    if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
+      HELM_SET_TYK_MDCB_SERVICE="--set tyk-mdcb.mdcb.service.type=$HELM_TYK_MDCB_SERVICE_TYPE"
+      HELM_SET_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
+      HELM_RELEASE_NAME=$HELM_TYKCONTROLPLANE_RELEASE_NAME
+    elif [[ $HSBX_CHART == 'tyk-stack' ]]; then
+      HELM_RELEASE_NAME=$HELM_TYKSTACK_RELEASE_NAME
+    fi
+    helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
       --install \
       --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
       --set global.adminUser.email=$ADMIN_EMAIL \
@@ -483,6 +497,9 @@ function runHelm {
       --set global.tls.gateway=$HSBX_GATE_USE_HTTPS \
       --set tyk-dashboard.dashboard.image.tag=$HSBX_DASH_VERS \
       --set tyk-dashboard.dashboard.service.type=$HELM_TYK_DASHBOARD_SERVICE_TYPE \
+      --set tyk-dashboard.dashboard.auditLogs.enabled=true \
+      --set tyk-dashboard.dashboard.auditLogs.enableDetailedRecording=true \
+      --set tyk-dashboard.dashboard.auditLogs.type=db \
       $HELM_SET_MONGO_DRIVER \
       $HELM_SET_MONGO_URL_SECRET_NAME \
       $HELM_SET_MONGO_URL_SECRET_KEYNAME \
@@ -496,6 +513,8 @@ function runHelm {
       $HELM_SET_TYK_GATEWAY_EXTRAENVS \
       $HELM_SET_TYK_PUMP_EXTRAENVS \
       $HELM_SET_TYK_DEVPORTAL_EXTRAENVS \
+      $HELM_SET_TYK_MDCB_SERVICE \
+      $HELM_SET_MDCB_LICENCE \
       --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
       --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
       --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
@@ -504,7 +523,7 @@ function runHelm {
       --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
   else
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
-    helm upgrade $HELM_TYKSTACK_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
+    helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
       --install \
       -f $HSBX_VALUES_FILE
   fi
@@ -554,15 +573,15 @@ function getHTTPS {
 }
 
 function getDashboardPort {
-  kubectl get svc -n $NAMESPACE dashboard-svc-tykstack-tyk-dashboard --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+  kubectl get svc -n $NAMESPACE dashboard-svc-$HELM_RELEASE_NAME-tyk-dashboard --no-headers=true | awk -F '[:/ ]+' '{print $6}'
 }
 
 function getPortalPort {
-  kubectl get svc -n $NAMESPACE dev-portal-svc-tykstack-tyk-dev-portal --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+  kubectl get svc -n $NAMESPACE dev-portal-svc-$HELM_RELEASE_NAME-tyk-dev-portal --no-headers=true | awk -F '[:/ ]+' '{print $6}'
 }
 
 function getControlGatewayPort {
-  kubectl get svc -n $NAMESPACE gateway-svc-tykstack-tyk-gateway --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+  kubectl get svc -n $NAMESPACE gateway-svc-$HELM_RELEASE_NAME-tyk-gateway --no-headers=true | awk -F '[:/ ]+' '{print $6}'
 }
 
 function getPostgresPort {
@@ -575,6 +594,10 @@ function getMongoPort {
 
 function getControlRedisPort {
   kubectl get svc -n $NAMESPACE tyk-redis-master --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+}
+
+function getMDCBPort {
+  kubectl get svc -n $NAMESPACE mdcb-svc-$HELM_RELEASE_NAME-tyk-mdcb --no-headers=true | awk -F '[:/ ]+' '{print $6}'
 }
 
 # check if we're on Mongodb or Postgresql
@@ -628,6 +651,7 @@ function reportSanboxInfo {
   typeset ssh_hybrid_redis; typeset hybrid_redis_port
   typeset display_IP
   HSBX_CHART=$(getChart)
+  HELM_RELEASE_NAME=$(getHelmRelease)
   HSBX_HAS_EDP=$(getEDPversion)
   https=$(getHTTPS)
   if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
