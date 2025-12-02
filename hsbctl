@@ -29,6 +29,7 @@ HSBX_GATE_SECRET=Secret
 HSBX_DEVPORTAL_PORTAL_SECRET=""
 HSBX_TYK_K8S_SECRETS=tyk-system-secrets  # licences and admin secrets
 HSBX_ADMIN_ACCOUNT_SECRETS=tyk-admin-account-secrets # Admin user details
+HSBX_REMOTE_CONTROL_PLANE_SECRETS=tyk-remote-control-plane-secrets
 MONGODB_SECRETS=mongourl-secrets
 POSTGRES_SECRETS=postgres-secrets
 
@@ -132,8 +133,14 @@ function help {
   echo "$name get <sandbox namespace...> [chart|release|description|dashboard|gateway|redis|redis-password|redis-port|key|mdcb|mongo|postgres|orgid|values]"
   echo "      Print the requested detail in a way that's useful in another script"
   echo "      Only 'values' is currently implemented"
+  echo "$name logs <sandbox namespace...> <pod part name>"
+  echo "      Tails the logs of the first pod that matches 'pod part name' in the namespace"
   echo "$name info <sandbox namespace...>"
   echo "      Print info detailed info on sandbox namespaces"
+  echo "$name shell <sandbox namespace...> <pod part name>"
+  echo "      Spawns a shell into the pod. Mostly they are now distroless but the bastion can be used"
+  echo "$name version <sandbox namespace...>"
+  echo "      Shows the image version in each deployment in the namespace"
 }
 
 function listPods {
@@ -314,9 +321,13 @@ function createNamespace {
     echo "[INFO]Created namespace '$NAMESPACE'"
   fi
   rm -f $configYAML
+}
+
+function setupControlPlaneBootstrapSecrets {
   setupTykSystemSecrets
   setupAdminAccountSecrets
 }
+
 
 # setup secrets like licences and the Admin secret
 function setupTykSystemSecrets {
@@ -340,6 +351,20 @@ function setupAdminAccountSecrets {
       --from-literal=adminUserLastName=User \
       --from-literal=adminUserEmail=$ADMIN_EMAIL \
       --from-literal=adminUserPassword=$ADMIN_PASSWORD
+  fi
+}
+
+# setup secrets for the remote control plane
+function setupRemoteControlPlaneSecrets {
+  typeset orgid
+  typeset adminKey
+  orgid=$(getOrgID $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE)
+  adminKey=$(getAdminUserKey $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE)
+  if ! kubectl get secret -n $NAMESPACE | grep -qw $HSBX_REMOTE_CONTROL_PLANE_SECRETS; then
+    kubectl create secret generic $HSBX_REMOTE_CONTROL_PLANE_SECRETS -n $NAMESPACE \
+      --from-literal=orgId=$orgid \
+      --from-literal=userApiKey=$adminKey \
+      --from-literal=groupID=$NAMESPACE
   fi
 }
 
@@ -553,7 +578,7 @@ function applyYAMLtemplate {
 
 function runHelm {
   if [[ -z $HSBX_VALUES_FILE ]]; then
-    echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE"
+    echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using release named $HELM_TYKSTACK_RELEASE_NAME"
     if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
       HELM_SET_TYK_MDCB_SERVICE="--set tyk-mdcb.mdcb.service.type=$HELM_TYK_MDCB_SERVICE_TYPE"
       HELM_SET_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
@@ -561,44 +586,48 @@ function runHelm {
     elif [[ $HSBX_CHART == 'tyk-stack' ]]; then
       HELM_RELEASE_NAME=$HELM_TYKSTACK_RELEASE_NAME
     fi
-    helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
-      --install \
-      --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
-      --set global.adminUser.email=$ADMIN_EMAIL \
-      --set global.secrets.useSecretName=$HSBX_TYK_K8S_SECRETS \
-      --set global.components.operator=false \
-      --set global.components.devPortal=$HELM_TYK_DEVPORTAL_ENABLED \
-      --set global.storageType=$HELM_GLOBAL_STORAGETYPE \
-      --set global.redis.addrs="{tyk-redis-master.$NAMESPACE.svc:6379}" \
-      --set global.redis.passSecret.name=tyk-redis \
-      --set global.redis.passSecret.keyName=redis-password \
-      --set global.tls.gateway=$HSBX_GATE_USE_HTTPS \
-      --set tyk-dashboard.dashboard.image.tag=$HSBX_DASH_VERS \
-      --set tyk-dashboard.dashboard.service.type=$HELM_TYK_DASHBOARD_SERVICE_TYPE \
-      --set tyk-dashboard.dashboard.auditLogs.enabled=true \
-      --set tyk-dashboard.dashboard.auditLogs.enableDetailedRecording=true \
-      --set tyk-dashboard.dashboard.auditLogs.type=db \
-      $HELM_SET_MONGO_DRIVER \
-      $HELM_SET_MONGO_URL_SECRET_NAME \
-      $HELM_SET_MONGO_URL_SECRET_KEYNAME \
-      $HELM_SET_PG_CONNECTION_SECRET_NAME \
-      $HELM_SET_PG_CONNECTION_SECRET_KEYNAME \
-      $HELM_SET_TYK_DEVPORTAL_USESECRETNAME \
-      $HELM_SET_TYK_DEVPORTAL_SERVICE \
-      $HELM_SET_TYK_DEVPORTAL_IMAGE_TAG \
-      $HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT \
-      $HELM_SET_TYK_DASHBOARD_EXTRAENVS \
-      $HELM_SET_TYK_GATEWAY_EXTRAENVS \
-      $HELM_SET_TYK_PUMP_EXTRAENVS \
-      $HELM_SET_TYK_DEVPORTAL_EXTRAENVS \
-      $HELM_SET_TYK_MDCB_SERVICE \
-      $HELM_SET_MDCB_LICENCE \
-      --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
-      --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
-      --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
-      $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
-      --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
-      --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
+    if [[ $HSBX_CHART == 'tyk-control-plane' || $HSBX_CHART == 'tyk-stack' ]]; then
+      helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
+        --install \
+        --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
+        --set global.adminUser.email=$ADMIN_EMAIL \
+        --set global.secrets.useSecretName=$HSBX_TYK_K8S_SECRETS \
+        --set global.components.operator=false \
+        --set global.components.devPortal=$HELM_TYK_DEVPORTAL_ENABLED \
+        --set global.storageType=$HELM_GLOBAL_STORAGETYPE \
+        --set global.redis.addrs="{tyk-redis-master.$NAMESPACE.svc:6379}" \
+        --set global.redis.passSecret.name=tyk-redis \
+        --set global.redis.passSecret.keyName=redis-password \
+        --set global.tls.gateway=$HSBX_GATE_USE_HTTPS \
+        --set tyk-dashboard.dashboard.image.tag=$HSBX_DASH_VERS \
+        --set tyk-dashboard.dashboard.service.type=$HELM_TYK_DASHBOARD_SERVICE_TYPE \
+        --set tyk-dashboard.dashboard.auditLogs.enabled=true \
+        --set tyk-dashboard.dashboard.auditLogs.enableDetailedRecording=true \
+        --set tyk-dashboard.dashboard.auditLogs.type=db \
+        $HELM_SET_MONGO_DRIVER \
+        $HELM_SET_MONGO_URL_SECRET_NAME \
+        $HELM_SET_MONGO_URL_SECRET_KEYNAME \
+        $HELM_SET_PG_CONNECTION_SECRET_NAME \
+        $HELM_SET_PG_CONNECTION_SECRET_KEYNAME \
+        $HELM_SET_TYK_DEVPORTAL_USESECRETNAME \
+        $HELM_SET_TYK_DEVPORTAL_SERVICE \
+        $HELM_SET_TYK_DEVPORTAL_IMAGE_TAG \
+        $HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT \
+        $HELM_SET_TYK_DASHBOARD_EXTRAENVS \
+        $HELM_SET_TYK_GATEWAY_EXTRAENVS \
+        $HELM_SET_TYK_PUMP_EXTRAENVS \
+        $HELM_SET_TYK_DEVPORTAL_EXTRAENVS \
+        $HELM_SET_TYK_MDCB_SERVICE \
+        $HELM_SET_MDCB_LICENCE \
+        --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
+        --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
+        --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
+        $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
+        --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
+        --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
+    elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
+      exit 0
+    fi
   else
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
     helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
@@ -614,7 +643,12 @@ function getDescription {
 
 # return the chart used to create the sandbox
 function getChart {
-  kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_CHART
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
+  kubectl get configmap sandbox-details -n $namespace -o json | jq -r .data.HSBX_CHART
 }
 
 # return the chart used to create the sandbox
@@ -623,7 +657,12 @@ function getEDPversion {
 }
 
 function getAdminUserKey {
-  kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_ADMIN_KEY
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
+  kubectl get configmap sandbox-details -n $namespace -o json | jq -r .data.HSBX_ADMIN_KEY
 }
 
 function getHelmRelease {
@@ -648,7 +687,12 @@ function setHelmRelease {
 }
     
 function getOrgID {
-  kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_ORGID
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
+  kubectl get configmap sandbox-details -n $namespace -o json | jq -r .data.HSBX_ORGID
 }
 
 function getHTTPS {
@@ -660,15 +704,25 @@ function getDashboardPort {
 }
 
 function getDashboardInternalURL {
-  echo "http://dashboard-svc-$HELM_RELEASE_NAME-tyk-dashboard.$NAMESPACE.svc:3000"
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
+  echo "http://dashboard-svc-$HELM_RELEASE_NAME-tyk-dashboard.$namespace.svc:3000"
 }
 
 function getGatewayInternalURL {
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
   typeset proto=http
   if [[ $(getHTTPS) == "true" ]]; then
     proto=https
   fi
-  echo "$proto://gateway-svc-$HELM_RELEASE_NAME-tyk-gateway.$NAMESPACE.svc:8080"
+  echo "$proto://gateway-svc-$HELM_RELEASE_NAME-tyk-gateway.$namespace.svc:8080"
 }
 
 function getPortalPort {
@@ -693,6 +747,14 @@ function getRedisPort {
 
 function getMDCBPort {
   kubectl get svc -n $NAMESPACE mdcb-svc-$HELM_RELEASE_NAME-tyk-mdcb --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+}
+
+function getMDCBHealthPort {
+  kubectl get svc -n $NAMESPACE mdcb-svc-$HELM_RELEASE_NAME-tyk-mdcb --no-headers=true | awk -F '[:/ ]+' '{print $8}'
+}
+
+function getMDCBServce {
+  echo "mdcb-svc-$HELM_RELEASE_NAME-tyk-mdcb.$NAMESPACE.svc:9091"
 }
 
 # check if we're on Mongodb or Postgresql
@@ -727,6 +789,21 @@ function showTykVersions {
     fi
   done
   echo $report
+}
+
+# tail the pods logs
+function showLogs {
+  typeset podPartName
+  typeset pod
+  podPartName=$1
+  pod=$(getPodNames $podPartName | sort | xargs -n 1 | head -1)
+  if [[ -n $pod ]]; then
+    echo "[INFO]kubectl logs -n $NAMESPACE $pod -f"
+    kubectl logs -n $NAMESPACE $pod -f
+  else
+    echo "[FATAL]'$podPartName' not found in namespace $NAMESPACE"
+    kubectl get pods -n $NAMESPACE
+  fi
 }
 
 function reportSanboxInfo {
@@ -773,7 +850,7 @@ function reportSanboxInfo {
     if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
       mdcb_port=$(getMDCBPort)
       ssh_mdcb="-L localhost:$mdcb_port:$IP:$mdcb_port"
-      echo "$NAMESPACE.MDCBport:          $display_IP:$mdcb_port"
+      echo "$NAMESPACE.MDCBport:          $display_IP:$mdcb_port http://$display_IP:$(getMDCBHealthPort)/health"
     fi
     if [[ $HSBX_DATABASE == 'mongo' ]]; then
       checkMongoShellInstalled
@@ -862,7 +939,7 @@ if [[ $# -gt 0 ]]; then
   case $1 in 
     create)
       shift
-      while getopts :C:c:D:E:hN:PpR:t:V:v: arg; do
+      while getopts :C:c:D:E:hN:PpR:r:t:V:v: arg; do
         case $arg in
           c)
             # the number of gateways to deploy (these are also just gateways in the pro install)
@@ -904,7 +981,11 @@ if [[ $# -gt 0 ]]; then
             HSBX_DATABASE=postgres
             ;;
           R)
-            # The size of the allocated control and data plane redis storage in GiB
+            # the sandbox to use as the remote control plan
+            HSBX_REMOTE_CONTROL_PLANE_NAMESPACE=$(getNamespaceNames $OPTARG)
+            ;;
+          r)
+            # The size of the allocated redis storage in GiB
             HSBX_REDIS_DB_SIZE=$(echo $OPTARG | tr -cd 0-9)
             ;;
           t)
@@ -933,6 +1014,18 @@ if [[ $# -gt 0 ]]; then
             ;;
         esac
       done
+      if [[ -n $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE ]]; then
+        if ! namespaceExists $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE; then
+          echo "[FATAL]Control plane namespace '$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE' does not exist"
+          exit 1
+        fi
+        if [[ $(getChart $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE) != 'tyk-control-plane' ]]; then
+          echo "[FATAL]Control plane namespace '$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE' is not a tyk-control-plane deployment"
+          exit 1
+        fi
+        # force the chart to tyk-data-plane so we can install a data plane
+        HSBX_CHART=tyk-data-plane
+      fi
       if [[ -z $NAMESPACE ]]; then
         NAMESPACE=hsandbox-$(nextFreeNamespace)
       fi
@@ -973,40 +1066,48 @@ if [[ $# -gt 0 ]]; then
           echo "[INFO]Adding environment variables from $ENV_VAR_FILE to configmap sandbox-env-vars"
           kubectl create configmap sandbox-env-vars --from-env-file=$ENV_VAR_FILE -n $NAMESPACE
         fi
-        if [[ $HSBX_DATABASE == 'mongo' ]]; then
-          deployMongodb
-          mongoSetupSecrets
-          # wait for the DBs to be available
-          waitStatefulSetReady tyk-redis-master tyk-redis-replicas
-          waitDeploymentReady tyk-mongo-mongodb
-          HELM_GLOBAL_STORAGETYPE="mongo"
-        else
-          HELM_GLOBAL_STORAGETYPE="postgres"
-          deployPostgres
-          postgresSetupSecrets
-          # wait for the DBs to be available
-          waitStatefulSetReady tyk-redis-master tyk-redis-replicas tyk-postgres-postgresql
+        if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
+          # setup the secrets that are needed to bootstrap a tyk stack
+          setupControlPlaneBootstrapSecrets
+          if [[ $HSBX_DATABASE == 'mongo' ]]; then
+            deployMongodb
+            mongoSetupSecrets
+            # wait for the DBs to be available
+            waitStatefulSetReady tyk-redis-master tyk-redis-replicas
+            waitDeploymentReady tyk-mongo-mongodb
+            HELM_GLOBAL_STORAGETYPE="mongo"
+          else
+            HELM_GLOBAL_STORAGETYPE="postgres"
+            deployPostgres
+            postgresSetupSecrets
+            # wait for the DBs to be available
+            waitStatefulSetReady tyk-redis-master tyk-redis-replicas tyk-postgres-postgresql
+          fi
+          if [[ $HSBX_ENABLE_DEVPORTAL == 'true' ]]; then
+            setupDevPortalSecrets
+            HELM_TYK_DEVPORTAL_ENABLED=true
+            HELM_SET_TYK_DEVPORTAL_USESECRETNAME="--set tyk-dev-portal.useSecretName=$HSBX_DEVPORTAL_PORTAL_SECRET"
+            HELM_SET_TYK_DEVPORTAL_IMAGE_TAG="--set tyk-dev-portal.image.tag=$HSBX_DEVPORTAL_VERS"
+            HELM_SET_TYK_DEVPORTAL_SERVICE="--set tyk-dev-portal.service.type=NodePort"
+            HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT="--set tyk-dev-portal.database.dialect=postgres"
+            # set PORTAL_DISABLE_CSRF_CHECK=true by default
+            HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].name=PORTAL_DISABLE_CSRF_CHECK"
+            HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=true"
+            # remember to increment HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX so that we keep in sync
+            let HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX+=1
+          else
+            HELM_TYK_DEVPORTAL_ENABLED=false
+          fi
+          # turn on TYK_GW_ENABLEHASHEDKEYSLISTING=true because the chart doesn't do that
+          HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].name=TYK_GW_ENABLEHASHEDKEYSLISTING"
+          HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].value=true"
+          # remember to increment HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX so that we keep in sync
+          let HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX+=1
+        elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
+            waitStatefulSetReady tyk-redis-master tyk-redis-replicas
+            setupRemoteControlPlaneSecrets
         fi
-        if [[ $HSBX_ENABLE_DEVPORTAL == 'true' ]]; then
-          setupDevPortalSecrets
-          HELM_TYK_DEVPORTAL_ENABLED=true
-          HELM_SET_TYK_DEVPORTAL_USESECRETNAME="--set tyk-dev-portal.useSecretName=$HSBX_DEVPORTAL_PORTAL_SECRET"
-          HELM_SET_TYK_DEVPORTAL_IMAGE_TAG="--set tyk-dev-portal.image.tag=$HSBX_DEVPORTAL_VERS"
-          HELM_SET_TYK_DEVPORTAL_SERVICE="--set tyk-dev-portal.service.type=NodePort"
-          HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT="--set tyk-dev-portal.database.dialect=postgres"
-          # set PORTAL_DISABLE_CSRF_CHECK=true by default
-          HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].name=PORTAL_DISABLE_CSRF_CHECK"
-          HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=true"
-          # remember to increment HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX so that we keep in sync
-          let HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX+=1
-        else
-          HELM_TYK_DEVPORTAL_ENABLED=false
-        fi
-        # turn on TYK_GW_ENABLEHASHEDKEYSLISTING=true because the chart doesn't do that
-        HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].name=TYK_GW_ENABLEHASHEDKEYSLISTING"
-        HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].value=true"
-        # remember to increment HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX so that we keep in sync
-        let HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX+=1
+        exit
         runHelm
         saveOrgAndAdminKey
         echo "[INFO]$NAMESPACE"
@@ -1088,6 +1189,16 @@ if [[ $# -gt 0 ]]; then
           exit 1
           ;;
       esac
+      ;;
+    log*)
+      shift
+      if [[ $# -lt 2 ]]; then
+        echo "[FATAL]Must provide namespace and pod names"
+        exit 1
+      fi
+      NAMESPACE=$(getNamespaceNames $1)
+      shift
+      showLogs $1
       ;;
     shell)
       shift
