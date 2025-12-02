@@ -382,12 +382,8 @@ function runShell {
         # but populate the environment with handy values
         adminKey=$(getAdminUserKey)
         orgid=$(getOrgID)
-        TYK_DSHB="http://dashboard-svc-$HELM_RELEASE_NAME-tyk-dashboard:3000"
-        if [[ $(getHTTPS) == "true" ]]; then
-          TYK_GW="https://gateway-svc-$HELM_RELEASE_NAME-tyk-gateway:8080"
-        else
-          TYK_GW="http://gateway-svc-$HELM_RELEASE_NAME-tyk-gateway:8080"
-        fi
+        TYK_DSHB=$(getDashboardInternalURL)
+        TYK_GW=$(getGatewayInternalURL)
         echo "[INFO]Setting TYK_KEY=$adminKey TYK_ORG=$orgid TYK_DSHB=$TYK_DSHB TYK_GW=$TYK_GW for convenience"
         kubectl exec $pod -n $NAMESPACE -it -- env TYK_KEY=$adminKey TYK_ORG=$orgid TYK_DSHB=$TYK_DSHB TYK_GW=$TYK_GW /bin/bash
       else
@@ -661,6 +657,18 @@ function getHTTPS {
 
 function getDashboardPort {
   kubectl get svc -n $NAMESPACE dashboard-svc-$HELM_RELEASE_NAME-tyk-dashboard --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+}
+
+function getDashboardInternalURL {
+  echo "http://dashboard-svc-$HELM_RELEASE_NAME-tyk-dashboard.$NAMESPACE.svc:3000"
+}
+
+function getGatewayInternalURL {
+  typeset proto=http
+  if [[ $(getHTTPS) == "true" ]]; then
+    proto=https
+  fi
+  echo "$proto://gateway-svc-$HELM_RELEASE_NAME-tyk-gateway.$NAMESPACE.svc:8080"
 }
 
 function getPortalPort {
