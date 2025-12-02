@@ -13,6 +13,7 @@ SCRIPTDIR=$(
 )
 SCRIPTNAME=$(basename $SCRIPTNAME)
 VERSIONFILE="$SCRIPTDIR/tyk-versions.list"
+YAMLDIR="$SCRIPTDIR/YAML"
 
 NAMESPACE_SELECTOR_LABEL="creator=hsbctl"
 ISTIO_INJECTION_LABEL='istio-injection=enabled'
@@ -128,7 +129,7 @@ function help {
   echo "      -v Version tag. The file $VERSIONFILE contains the versions of each product used"
   echo "$name delete <sandbox namespace...>"
   echo "      Delete the sandbox namespace given as a tag and all resources in it"
-  echo "$name get <sandbox namespace...> [chart|release|description|dashboard|control-gw|control-redis|control-redis-password|control-redis-port|key|mdcb|mongo|postgres|orgid|values]"
+  echo "$name get <sandbox namespace...> [chart|release|description|dashboard|gateway|redis|redis-password|redis-port|key|mdcb|mongo|postgres|orgid|values]"
   echo "      Print the requested detail in a way that's useful in another script"
   echo "      Only 'values' is currently implemented"
   echo "$name info <sandbox namespace...>"
@@ -356,6 +357,54 @@ function deployRedis {
   fi
 }
 
+function deployBastion {
+  echo "[INFO]Creating bastion pod for shell access and debugging"
+  applyYAMLtemplate bastion.yaml bastion-svc.yaml
+}
+
+# spawn a shell in a pod
+function runShell {
+  typeset podPartName
+  typeset pod
+  typeset adminKey
+  typeset orgid
+  typeset https
+  typeset TYK_DSHB; typeset TYK_GW
+  for podPartName in $*
+  do
+    echo "[INFO]Creating shell for $podPartName"
+    for pod in $(getPodNames $podPartName)
+    do
+      echo "[INFO]Starting /bin/sh in $pod"
+      echo "[INFO]kubectl exec $pod -n $NAMESPACE -it -- /bin/sh"
+      if echo $pod | grep -q bastion; then
+        # the bastion host is RHEL and setup as I want it so just create a shell
+        # but populate the environment with handy values
+        adminKey=$(getAdminUserKey)
+        orgid=$(getOrgID)
+        TYK_DSHB="http://dashboard-svc-$HELM_RELEASE_NAME-tyk-dashboard:3000"
+        if [[ $(getHTTPS) == "true" ]]; then
+          TYK_GW="https://gateway-svc-$HELM_RELEASE_NAME-tyk-gateway:8080"
+        else
+          TYK_GW="http://gateway-svc-$HELM_RELEASE_NAME-tyk-gateway:8080"
+        fi
+        echo "[INFO]Setting TYK_KEY=$adminKey TYK_ORG=$orgid TYK_DSHB=$TYK_DSHB TYK_GW=$TYK_GW for convenience"
+        kubectl exec $pod -n $NAMESPACE -it -- env TYK_KEY=$adminKey TYK_ORG=$orgid TYK_DSHB=$TYK_DSHB TYK_GW=$TYK_GW /bin/bash
+      else
+        # if ncurses-base isnt installed then TERM isn't recognised
+        # I found it was installed in some images but not others
+        # echo "[INFO]Checking for ncurses-base in $pod"
+        if ! kubectl exec $pod -n $NAMESPACE -- test -d /lib/terminfo >/dev/null 2>&1; then
+          echo "[INFO]Installing ncurses-base to provide terminal types to the shell"
+          kubectl exec $pod -n $NAMESPACE -- apt-get update > /dev/null 2>&1
+          kubectl exec $pod -n $NAMESPACE -- apt install ncurses-base -y > /dev/null 2>&1
+        fi
+        kubectl exec $pod -n $NAMESPACE -it -- /bin/sh
+      fi
+    done
+  done
+}
+
 # fetch the redis password from the tyk-redis secret, decode it and save it into REDIS_PASSWORD
 function getRedisPassword {
   kubectl get secret --namespace $NAMESPACE tyk-redis -o jsonpath="{.data.redis-password}" | base64 -d
@@ -472,6 +521,40 @@ function saveOrgAndAdminKey {
   kubectl get configmap sandbox-details -n $NAMESPACE -o yaml | yq '.data.HSBX_ORGID = "'$orgID'"' | kubectl apply -f -
 }
 
+function getPodNames {
+  typeset podname
+  podname="$1"
+  kubectl get pods -n $NAMESPACE | awk '/'$podname'/ {print $1}' | xargs
+}
+
+# Process the YAML with envsubst to substitute environment variables into them
+# All exported environment varables are available to envsubst but these are the main ones
+# HSBX_GATE_VERS which has the gateway version. This is used to pull the gateway docker image
+# HSBX_GATE_EE which contains nothing for non-EE gateways and "-ee" for EE gateways
+# HSBX_DASH_VERS which has the dashboard version. This is used to pull the dashboard docker image
+# HSBX_PUMP_VERS which has the pump version. This is used to pull the pump docker image
+# HSBX_MDCB_VERS which has the MDCB version. This is used to pull the MDCB docker image
+# HSBX_EDP_VERS which has the EDP version. This is used to pull the EDP docker image
+# HSBX_NS which is the namespace for the pods etc.
+function applyYAMLtemplate {
+  typeset YAMLfile
+  typeset tmpYamlFile
+  for YAMLfile in $*; do
+    YAMLfile=$(basename $YAMLfile)
+    tmpYamlFile=$(mktemp /tmp/XXXXX-$YAMLfile)
+    if [[ -f $YAMLDIR/$YAMLfile ]]; then
+      cat $YAMLDIR/$YAMLfile | envsubst > $tmpYamlFile
+      if [[ -n $ENV_VAR_FILE ]]; then
+        if grep -qw 'kind: Deployment' $tmpYamlFile; then
+          addGlobalEnvVars $tmpYamlFile
+        fi
+      fi
+      kubectl apply -n $NAMESPACE -f $tmpYamlFile
+    fi
+    rm -f $tmpYamlFile
+  done
+}
+
 function runHelm {
   if [[ -z $HSBX_VALUES_FILE ]]; then
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE"
@@ -563,10 +646,15 @@ function getHelmRelease {
       ;;
   esac
 }
+
+function setHelmRelease {
+  HELM_RELEASE_NAME=$(getHelmRelease)
+}
     
 function getOrgID {
   kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_ORGID
 }
+
 function getHTTPS {
   kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_GATE_USE_HTTPS
 }
@@ -871,6 +959,7 @@ if [[ $# -gt 0 ]]; then
         createNamespace
         # setup redis and save the passwords
         deployRedis
+        deployBastion
         if [[ -n $ENV_VAR_FILE ]]; then
           # create a config map to hold the environment variables
           echo "[INFO]Adding environment variables from $ENV_VAR_FILE to configmap sandbox-env-vars"
@@ -963,20 +1052,20 @@ if [[ $# -gt 0 ]]; then
         [Dd]ashboard)
           echo "http://$IP:$(getDashboardPort)/"
           ;;
-        [Cc]control-gateway|[Gg]ateway)
+        [Gg]ateway)
           if [[ $(getHTTPS) == 'true' ]]; then
             echo "https://$IP:$(getGatewayPort)/"
           else
             echo "http://$IP:$(getGatewayPort)/"
           fi
           ;;
-        [Cc]ontrol-redis-password)
+        [Rr]edis-password)
           echo $(getRedisPassword)
           ;;
-        [Cc]ontrol-redis-port)
+        [Rr]edis-port)
           getRedisPort
           ;;
-        [Cc]ontrol-redis)
+        [Rr]edis)
           echo "REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $IP -p $(getRedisPort)"
           ;;
         [Cc]hart)
@@ -991,6 +1080,21 @@ if [[ $# -gt 0 ]]; then
           exit 1
           ;;
       esac
+      ;;
+    shell)
+      shift
+      if [[ $# -lt 1 ]]; then
+        echo "[FATAL]Must provide namespace"
+        exit 1
+      fi
+      NAMESPACE=$(getNamespaceNames $1)
+      setHelmRelease
+      shift
+      if namespaceExists $NAMESPACE; then
+        runShell $*
+      else
+        echo "[FATAL]No such ksandbox: $NAMESPACE"
+      fi
       ;;
     rm | del*)
       shift
