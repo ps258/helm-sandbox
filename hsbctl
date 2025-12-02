@@ -48,7 +48,7 @@ HSBX_VALUES_FILE=''
 HSBX_PGUSER=postgres      # default postgres username
 HSBX_PGDB=tyk_analytics   # default postgres database
 HSBX_REDIS_REPLICAS=0     # the number of redis replicas to run. It slows creation of a sandbox significantly to have these enabled
-HSBX_REDIS_DB_SIZE=1      # the size to make the redis PVC for both control plane and edge deployment
+HSBX_REDIS_DB_SIZE=1      # the size to make the redis PVC for both control plane and data plane deployment
 HSBX_MAIN_DB_SIZE=5       # the size to make the mongo or postgresql DB PVC
 HSBX_PORTAL_THEMES_SIZE=2 # the size to make EDP's /opt/portal/themes volume for storing themes (not implemented yet)
 HSBX_CHART=tyk-stack
@@ -128,12 +128,11 @@ function help {
   echo "      -v Version tag. The file $VERSIONFILE contains the versions of each product used"
   echo "$name delete <sandbox namespace...>"
   echo "      Delete the sandbox namespace given as a tag and all resources in it"
-  echo "$name get <sandbox namespace...> [chart|release|description|dashboard|control-gw|control-redis|control-redis-password|control-redis-port|edge-gw|edge-redis|key|mdcb|mongo|postgres|orgid|values]"
+  echo "$name get <sandbox namespace...> [chart|release|description|dashboard|control-gw|control-redis|control-redis-password|control-redis-port|key|mdcb|mongo|postgres|orgid|values]"
   echo "      Print the requested detail in a way that's useful in another script"
   echo "      Only 'values' is currently implemented"
   echo "$name info <sandbox namespace...>"
   echo "      Print info detailed info on sandbox namespaces"
-
 }
 
 function listPods {
@@ -358,7 +357,7 @@ function deployRedis {
 }
 
 # fetch the redis password from the tyk-redis secret, decode it and save it into REDIS_PASSWORD
-function getControlRedisPassword {
+function getRedisPassword {
   kubectl get secret --namespace $NAMESPACE tyk-redis -o jsonpath="{.data.redis-password}" | base64 -d
 }
 
@@ -464,8 +463,8 @@ function saveOrgAndAdminKey {
   typeset adminRedisKey
   typeset adminAccessKey
   typeset orgID
-  redisPassword=$(getControlRedisPassword)
-  redisPort=$(getControlRedisPort)
+  redisPassword=$(getRedisPassword)
+  redisPort=$(getRedisPort)
   adminRedisKey=$(echo keys tyk-admin-api\* | REDISCLI_AUTH=$redisPassword redis-cli --raw -h $IP -p $redisPort | head -1)
   adminAccessKey=$(echo get $adminRedisKey | REDISCLI_AUTH=$redisPassword redis-cli --raw -h $IP -p $redisPort | jq -r .UserData.access_key)
   orgID=$(echo get $adminRedisKey | REDISCLI_AUTH=$redisPassword redis-cli --raw -h $IP -p $redisPort | jq -r .UserData.org_id)
@@ -580,7 +579,7 @@ function getPortalPort {
   kubectl get svc -n $NAMESPACE dev-portal-svc-$HELM_RELEASE_NAME-tyk-dev-portal --no-headers=true | awk -F '[:/ ]+' '{print $6}'
 }
 
-function getControlGatewayPort {
+function getGatewayPort {
   kubectl get svc -n $NAMESPACE gateway-svc-$HELM_RELEASE_NAME-tyk-gateway --no-headers=true | awk -F '[:/ ]+' '{print $6}'
 }
 
@@ -592,7 +591,7 @@ function getMongoPort {
   kubectl get svc -n $NAMESPACE tyk-mongo-mongodb --no-headers=true | awk -F '[:/ ]+' '{print $6}'
 }
 
-function getControlRedisPort {
+function getRedisPort {
   kubectl get svc -n $NAMESPACE tyk-redis-master --no-headers=true | awk -F '[:/ ]+' '{print $6}'
 }
 
@@ -639,13 +638,11 @@ function reportSanboxInfo {
   # envs to hold ssh port forwarding details for when we're on EC2
   typeset ssh_dashboard; typeset dashboard_port
   typeset ssh_edp; typeset edp_port
-  typeset ssh_control_gateway; typeset control_gateway_port
+  typeset ssh_gateway; typeset gateway_port
   typeset ssh_mdcb; typeset mdcb_port
-  typeset ssh_edge_gateway; typeset edge_gateway_port
   typeset ssh_mongodb; typeset mongodb_port
   typeset ssh_postgres; typeset postgres_port
-  typeset ssh_control_redis; typeset control_redis_port
-  typeset ssh_edge_redis; typeset edge_redis_port
+  typeset ssh_redis; typeset redis_port
   typeset ssh_standalone_gateway; typeset standalone_gateway_port
   typeset ssh_hybrid_gateway; typeset hybrid_gateway_port
   typeset ssh_hybrid_redis; typeset hybrid_redis_port
@@ -660,6 +657,7 @@ function reportSanboxInfo {
     display_IP=$IP
   fi
   echo "$NAMESPACE.Description:       $(getDescription)"
+  echo "$NAMESPACE.Chart:             $(getChart)"
   if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
     dashboard_port=$(getDashboardPort)
     ssh_dashboard="-L localhost:$dashboard_port:$IP:$dashboard_port"
@@ -669,56 +667,40 @@ function reportSanboxInfo {
       ssh_edp="-L localhost:$edp_port:$IP:$edp_port"
       echo "$NAMESPACE.portal:            http://$display_IP:$edp_port/"
     fi
-    control_gateway_port=$(getControlGatewayPort)
-    ssh_control_gateway="-L localhost:$control_gateway_port:$IP:$control_gateway_port"
+    gateway_port=$(getGatewayPort)
+    ssh_gateway="-L localhost:$gateway_port:$IP:$gateway_port"
     if [[ $https == "true" ]]; then
-      echo "$NAMESPACE.control-gateway:   https://$display_IP:$control_gateway_port/"
+      echo "$NAMESPACE.gateway:           https://$display_IP:$gateway_port/"
     else
-      echo "$NAMESPACE.control-gateway:   http://$display_IP:$control_gateway_port/"
+      echo "$NAMESPACE.gateway:           http://$display_IP:$gateway_port/"
     fi
     if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
       mdcb_port=$(getMDCBPort)
       ssh_mdcb="-L localhost:$mdcb_port:$IP:$mdcb_port"
       echo "$NAMESPACE.MDCBport:          $display_IP:$mdcb_port"
-      https=$(kubectl get deploy edge-gateway -n $NAMESPACE -o json | jq -r .metadata.labels.https)
-      edge_gateway_port=$(getEdgeGatewayPort)
-      ssh_edge_gateway="-L localhost:$edge_gateway_port:$IP:$edge_gateway_port"
-      if [[ $https == 'true' ]]; then
-        echo "$NAMESPACE.edge-gateway:      https://$display_IP:$edge_gateway_port/"
-      else
-        echo "$NAMESPACE.edge-gateway:      http://$display_IP:$edge_gateway_port/"
-      fi
     fi
     if [[ $HSBX_DATABASE == 'mongo' ]]; then
       checkMongoShellInstalled
       mongodb_port=$(getMongoPort)
       ssh_mongodb="-L localhost:$mongodb_port:$IP:$mongodb_port"
       echo "$NAMESPACE.mongo:             $MONGOSHELL --quiet $(getMongoExternalURL $display_IP $mongodb_port)"
-    fi
-    if [[ $HSBX_DATABASE == 'postgres' ]]; then
+    elif [[ $HSBX_DATABASE == 'postgres' ]]; then
       postgres_port=$(getPostgresPort)
       ssh_postgres="-L localhost:$postgres_port:$IP:$postgres_port"
       echo "$NAMESPACE.postgres:          PGPASSWORD=$(getPostgressPassword) psql --username=$HSBX_PGUSER --dbname=$HSBX_PGDB --host=$display_IP --port=$postgres_port"
     fi
-    control_redis_port=$(getControlRedisPort)
-    ssh_control_redis="-L localhost:$control_redis_port:$IP:$control_redis_port"
-    if [[ $HSBX_CHART == "tyk-control-plane" ]]; then
-      edge_redis_port=$(getEdgeRedisPort)
-      ssh_edge_redis="-L localhost:$edge_redis_port:$IP:$edge_redis_port"
-      echo "$NAMESPACE.control-redis:     REDISCLI_AUTH=$(getControlRedisPassword) redis-cli -h $display_IP -p $control_redis_port"
-      echo "$NAMESPACE.edge-redis:        redis-cli -h $display_IP -p $edge_redis_port"
-    else
-      echo "$NAMESPACE.control-redis:     REDISCLI_AUTH=$(getControlRedisPassword) redis-cli -h $display_IP -p $control_redis_port"
-    fi
+    redis_port=$(getRedisPort)
+    ssh_redis="-L localhost:$redis_port:$IP:$redis_port"
+    echo "$NAMESPACE.redis:             REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $display_IP -p $redis_port"
     echo "$NAMESPACE.AdminKey:          $(getAdminUserKey)"
     echo "$NAMESPACE.OrgID:             $(getOrgID)"
   elif [[ $HSBX_CHART == "tyk-gateway" ]]; then
     standalone_gateway_port=$(getStandaloneGatewayPort)
     ssh_standalone_gateway="-L localhost:$standalone_gateway_port:$IP:$standalone_gateway_port"
     echo "$NAMESPACE.gateway:   http://$display_IP:$standalone_gateway_port/"
-    control_redis_port=$(getControlRedisPort)
-    ssh_control_redis="-L localhost:$control_redis_port:$IP:$control_redis_port"
-    echo "$NAMESPACE.redis:     redis-cli -h $display_IP -p $control_redis_port"
+    redis_port=$(getRedisPort)
+    ssh_redis="-L localhost:$redis_port:$IP:$redis_port"
+    echo "$NAMESPACE.redis:     redis-cli -h $display_IP -p $redis_port"
   elif [[ $HSBX_CHART == "tyk-data-plane" ]]; then
     hybrid_gateway_port=$(getHybridGatewayPort)
     ssh_hybrid_gateway="-L localhost:$hybrid_gateway_port:$IP:$hybrid_gateway_port"
@@ -729,7 +711,7 @@ function reportSanboxInfo {
   fi
   if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
     # report the ssh command to map the service ports back to localhost
-    echo "$NAMESPACE.ssh                $(echo ssh $ssh_dashboard $ssh_edp $ssh_control_gateway $ssh_mdcb $ssh_edge_gateway $ssh_mongodb $ssh_postgres $ssh_control_redis $ssh_edge_redis $ssh_standalone_gateway $ssh_hybrid_gateway $ssh_hybrid_redis) <aws hostname>"
+    echo "$NAMESPACE.ssh                $(echo ssh $ssh_dashboard $ssh_edp $ssh_gateway $ssh_mdcb $ssh_mongodb $ssh_postgres $ssh_redis $ssh_standalone_gateway $ssh_hybrid_gateway $ssh_hybrid_redis) <aws hostname>"
   fi
   # if the namespace has the label 'istio-injection=enabled' then report the istio-system services
   if kubectl get ns --show-labels --no-headers=true $NAMESPACE | grep -q $ISTIO_INJECTION_LABEL; then
@@ -787,7 +769,7 @@ if [[ $# -gt 0 ]]; then
       while getopts :C:c:D:E:hN:PpR:t:V:v: arg; do
         case $arg in
           c)
-            # the number of control gateways to deploy (these are also just gateways in the pro install)
+            # the number of gateways to deploy (these are also just gateways in the pro install)
             # defaults to one
             HELM_SET_TYK_GATEWAY_REPLICACOUNT="--set tyk-gateway.gateway.replicaCount=$OPTARG"
             ;;
@@ -983,19 +965,19 @@ if [[ $# -gt 0 ]]; then
           ;;
         [Cc]control-gateway|[Gg]ateway)
           if [[ $(getHTTPS) == 'true' ]]; then
-            echo "https://$IP:$(getControlGatewayPort)/"
+            echo "https://$IP:$(getGatewayPort)/"
           else
-            echo "http://$IP:$(getControlGatewayPort)/"
+            echo "http://$IP:$(getGatewayPort)/"
           fi
           ;;
         [Cc]ontrol-redis-password)
-          echo $(getControlRedisPassword)
+          echo $(getRedisPassword)
           ;;
         [Cc]ontrol-redis-port)
-          getControlRedisPort
+          getRedisPort
           ;;
         [Cc]ontrol-redis)
-          echo "REDISCLI_AUTH=$(getControlRedisPassword) redis-cli -h $IP -p $(getControlRedisPort)"
+          echo "REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $IP -p $(getRedisPort)"
           ;;
         [Cc]hart)
           getChart
