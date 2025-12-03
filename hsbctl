@@ -1096,7 +1096,7 @@ if [[ $# -gt 0 ]]; then
           exit 1
         fi
         if [[ $(getChart $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE) != 'tyk-control-plane' ]]; then
-          echo "[FATAL]Control plane namespace '$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE' is not a tyk-control-plane deployment"
+          echo "[FATAL]Namespace '$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE' is not a tyk-control-plane deployment"
           exit 1
         fi
         # force the chart to tyk-data-plane so we can install a data plane
