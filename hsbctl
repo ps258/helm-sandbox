@@ -553,6 +553,11 @@ function saveOrgAndAdminKey {
   kubectl get configmap sandbox-details -n $NAMESPACE -o yaml | yq '.data.HSBX_ORGID = "'$orgID'"' | kubectl apply -f -
 }
 
+# save the control plane name for later retrieval
+function saveControlPlaneName {
+  kubectl get configmap sandbox-details -n $NAMESPACE -o yaml | yq '.data.HSBX_CP = "'$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE'"' | kubectl apply -f -
+}
+
 function getPodNames {
   typeset podname
   podname="$1"
@@ -669,7 +674,12 @@ function runHelm {
 
 # return the description of the sandbox which is stored in sandbox-details when the sandbox was created
 function getDescription {
-  kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_DESCRIPTION
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
+  kubectl get configmap sandbox-details -n $namespace -o json | jq -r .data.HSBX_DESCRIPTION
 }
 
 # return the chart used to create the sandbox
@@ -684,7 +694,12 @@ function getChart {
 
 # return the chart used to create the sandbox
 function getEDPversion {
-  kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_DEVPORTAL
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
+  kubectl get configmap sandbox-details -n $namespace -o json | jq -r .data.HSBX_DEVPORTAL
 }
 
 function getAdminUserKey {
@@ -694,6 +709,15 @@ function getAdminUserKey {
     namespace="$1"
   fi
   kubectl get configmap sandbox-details -n $namespace -o json | jq -r .data.HSBX_ADMIN_KEY
+}
+
+function getControlPlaneNamespace {
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
+  kubectl get configmap sandbox-details -n $namespace -o json | jq -r .data.HSBX_CP
 }
 
 function getHelmRelease {
@@ -838,7 +862,7 @@ function showTykVersions {
   typeset key; typeset value; typeset report; typeset sandboxDetails; typeset description
   sandboxDetails=$(kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data)
   report=''
-  for key in HSBX_VERSION HSBX_CHART HSBX_DATABASE HSBX_DB HSBX_GW HSBX_DEVPORTAL HSBX_PMP HSBX_MDCB; do
+  for key in HSBX_VERSION HSBX_CP HSBX_CHART HSBX_DATABASE HSBX_DB HSBX_GW HSBX_DEVPORTAL HSBX_PMP HSBX_MDCB; do
     value=$(echo $sandboxDetails | jq -r .$key)
     if [[ $value != 'null' ]]; then
       report="$report $key=$value"
@@ -925,6 +949,7 @@ function reportSanboxInfo {
     ssh_redis="-L localhost:$redis_port:$IP:$redis_port"
     echo "$NAMESPACE.redis:     redis-cli -h $display_IP -p $redis_port"
   elif [[ $HSBX_CHART == "tyk-data-plane" ]]; then
+    echo "$NAMESPACE.ControlPlane:      $(getControlPlaneNamespace)"
     hybrid_gateway_port=$(getGatewayPort)
     ssh_hybrid_gateway="-L localhost:$hybrid_gateway_port:$IP:$hybrid_gateway_port"
     echo "$NAMESPACE.gateway:           $(getGatewayProtocol)://$display_IP:$hybrid_gateway_port/"
@@ -1159,6 +1184,7 @@ if [[ $# -gt 0 ]]; then
             waitStatefulSetReady tyk-redis-master tyk-redis-replicas
             setupRemoteControlPlaneSecrets
             setupDataPlaneSecret
+            saveControlPlaneName
         fi
         runHelm
         if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
