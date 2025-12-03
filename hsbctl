@@ -30,6 +30,7 @@ HSBX_DEVPORTAL_PORTAL_SECRET=""
 HSBX_TYK_K8S_SECRETS=tyk-system-secrets  # licences and admin secrets
 HSBX_ADMIN_ACCOUNT_SECRETS=tyk-admin-account-secrets # Admin user details
 HSBX_REMOTE_CONTROL_PLANE_SECRETS=tyk-remote-control-plane-secrets
+HSBX_DATA_PLANE_SECRETS=tyk-dataplane-secrets
 MONGODB_SECRETS=mongourl-secrets
 POSTGRES_SECRETS=postgres-secrets
 
@@ -354,7 +355,7 @@ function setupAdminAccountSecrets {
   fi
 }
 
-# setup secrets for the remote control plane
+# setup secrets for the remote control plane. This is used by the data plane to connect to the control plane
 function setupRemoteControlPlaneSecrets {
   typeset orgid
   typeset adminKey
@@ -365,6 +366,14 @@ function setupRemoteControlPlaneSecrets {
       --from-literal=orgId=$orgid \
       --from-literal=userApiKey=$adminKey \
       --from-literal=groupID=$NAMESPACE
+  fi
+}
+
+# setup secrets for the data plane. This is just APISecret for the gateway
+function setupDataPlaneSecret {
+  if ! kubectl get secret -n $NAMESPACE | grep -qw $HSBX_DATA_PLANE_SECRETS; then
+    kubectl create secret generic $HSBX_DATA_PLANE_SECRETS -n $NAMESPACE \
+      --from-literal=APISecret=$HSBX_GATE_SECRET
   fi
 }
 
@@ -393,7 +402,6 @@ function runShell {
   typeset pod
   typeset adminKey
   typeset orgid
-  typeset https
   typeset TYK_DSHB; typeset TYK_GW
   for podPartName in $*
   do
@@ -500,7 +508,7 @@ function getMongoPassword {
   kubectl get secret --namespace $NAMESPACE tyk-mongo-mongodb -o jsonpath="{.data.mongodb-root-password}" | base64 -d
 }
 
-# setup Devportal secrets 
+# setup Devportal secrets
 # adminUserEmail in this secret is ignored by the bootstrap and default@example.com is used instead
 # BUT you can use the below in the helm command to set the admin email for portal
 # --set global.adminUser.email=$ADMIN_EMAIL
@@ -578,15 +586,17 @@ function applyYAMLtemplate {
 
 function runHelm {
   if [[ -z $HSBX_VALUES_FILE ]]; then
-    echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using release named $HELM_TYKSTACK_RELEASE_NAME"
-    if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
-      HELM_SET_TYK_MDCB_SERVICE="--set tyk-mdcb.mdcb.service.type=$HELM_TYK_MDCB_SERVICE_TYPE"
-      HELM_SET_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
-      HELM_RELEASE_NAME=$HELM_TYKCONTROLPLANE_RELEASE_NAME
-    elif [[ $HSBX_CHART == 'tyk-stack' ]]; then
-      HELM_RELEASE_NAME=$HELM_TYKSTACK_RELEASE_NAME
-    fi
+    echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using release named $HELM_RELEASE_NAME"
     if [[ $HSBX_CHART == 'tyk-control-plane' || $HSBX_CHART == 'tyk-stack' ]]; then
+      # tyk-stack and tyk-control-plane are very similar so we can do them together
+      if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
+        HELM_SET_TYK_MDCB_SERVICE="--set tyk-mdcb.mdcb.service.type=$HELM_TYK_MDCB_SERVICE_TYPE"
+        HELM_SET_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
+        #HELM_RELEASE_NAME=$HELM_TYKCONTROLPLANE_RELEASE_NAME
+      elif [[ $HSBX_CHART == 'tyk-stack' ]]; then
+        #HELM_RELEASE_NAME=$HELM_TYKSTACK_RELEASE_NAME
+        :
+      fi
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
         --install \
         --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
@@ -626,7 +636,25 @@ function runHelm {
         --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
         --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
     elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
-      exit 0
+      helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
+        --install \
+        --set global.remoteControlPlane.useSecretName=$HSBX_REMOTE_CONTROL_PLANE_SECRETS \
+        --set global.remoteControlPlane.useSSL=false \
+        --set global.remoteControlPlane.connectionString=$(getMDCBServce $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE) \
+        --set global.tls.gateway=$HSBX_GATE_USE_HTTPS \
+        --set global.secrets.useSecretName=$HSBX_DATA_PLANE_SECRETS \
+        --set global.redis.addrs="{tyk-redis-master.$NAMESPACE.svc:6379}" \
+        --set global.redis.passSecret.name=tyk-redis \
+        --set global.redis.passSecret.keyName=redis-password \
+        --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
+        --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
+        --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
+        $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
+        $HELM_SET_TYK_GATEWAY_EXTRAENVS \
+        $HELM_SET_TYK_PUMP_EXTRAENVS \
+        --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
+        --set tyk-pump.pump.hybridPump.enableAggregateAnalytics=false \
+        --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
     fi
   else
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
@@ -666,10 +694,14 @@ function getAdminUserKey {
 }
 
 function getHelmRelease {
-  if [[ -n $HSBX_CHART ]]; then
-    HSBX_CHART=$(getChart)
+  typeset namespace
+  typeset hsbx_chart
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
   fi
-  case $HSBX_CHART in
+  hsbx_chart=$(getChart $namespace)
+  case $hsbx_chart in
     tyk-stack)
       echo $HELM_TYKSTACK_RELEASE_NAME
       ;;
@@ -685,7 +717,7 @@ function getHelmRelease {
 function setHelmRelease {
   HELM_RELEASE_NAME=$(getHelmRelease)
 }
-    
+
 function getOrgID {
   typeset namespace
   namespace=$NAMESPACE
@@ -699,8 +731,28 @@ function getHTTPS {
   kubectl get configmap sandbox-details -n $NAMESPACE -o json | jq -r .data.HSBX_GATE_USE_HTTPS
 }
 
+function getGatewayProtocol {
+  if [[ $(getHTTPS) == "true" ]]; then
+    echo -n https
+  else
+    echo -n http
+  fi
+}
+
 function getDashboardPort {
   kubectl get svc -n $NAMESPACE dashboard-svc-$HELM_RELEASE_NAME-tyk-dashboard --no-headers=true | awk -F '[:/ ]+' '{print $6}'
+}
+
+function checkChartName {
+  typeset chartname
+  chartname="$1"
+  if [[ -z $chartname ]]; then
+    echo "[FATAL]No chart name provided"
+    exit 1
+  elif [[ $chartname != 'tyk-stack' && $chartname != 'tyk-control-plane' && $chartname != 'tyk-data-plane' ]]; then
+    echo "[FATAL]Chart '$chartname' unsupported"
+    exit 1
+  fi
 }
 
 function getDashboardInternalURL {
@@ -718,11 +770,7 @@ function getGatewayInternalURL {
   if [[ $# > 0 ]]; then
     namespace="$1"
   fi
-  typeset proto=http
-  if [[ $(getHTTPS) == "true" ]]; then
-    proto=https
-  fi
-  echo "$proto://gateway-svc-$HELM_RELEASE_NAME-tyk-gateway.$namespace.svc:8080"
+  echo "$(getGatewayProtocol)://gateway-svc-$HELM_RELEASE_NAME-tyk-gateway.$namespace.svc:8080"
 }
 
 function getPortalPort {
@@ -754,7 +802,12 @@ function getMDCBHealthPort {
 }
 
 function getMDCBServce {
-  echo "mdcb-svc-$HELM_RELEASE_NAME-tyk-mdcb.$NAMESPACE.svc:9091"
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
+  echo "mdcb-svc-$(getHelmRelease $namespace)-tyk-mdcb.$namespace.svc:9091"
 }
 
 # check if we're on Mongodb or Postgresql
@@ -807,7 +860,6 @@ function showLogs {
 }
 
 function reportSanboxInfo {
-  typeset https
   # envs to hold ssh port forwarding details for when we're on EC2
   typeset ssh_dashboard; typeset dashboard_port
   typeset ssh_edp; typeset edp_port
@@ -823,7 +875,6 @@ function reportSanboxInfo {
   HSBX_CHART=$(getChart)
   HELM_RELEASE_NAME=$(getHelmRelease)
   HSBX_HAS_EDP=$(getEDPversion)
-  https=$(getHTTPS)
   if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
     display_IP=localhost
   else
@@ -842,11 +893,7 @@ function reportSanboxInfo {
     fi
     gateway_port=$(getGatewayPort)
     ssh_gateway="-L localhost:$gateway_port:$IP:$gateway_port"
-    if [[ $https == "true" ]]; then
-      echo "$NAMESPACE.gateway:           https://$display_IP:$gateway_port/"
-    else
-      echo "$NAMESPACE.gateway:           http://$display_IP:$gateway_port/"
-    fi
+    echo "$NAMESPACE.gateway:           $(getGatewayProtocol)://$display_IP:$gateway_port/"
     if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
       mdcb_port=$(getMDCBPort)
       ssh_mdcb="-L localhost:$mdcb_port:$IP:$mdcb_port"
@@ -868,19 +915,19 @@ function reportSanboxInfo {
     echo "$NAMESPACE.AdminKey:          $(getAdminUserKey)"
     echo "$NAMESPACE.OrgID:             $(getOrgID)"
   elif [[ $HSBX_CHART == "tyk-gateway" ]]; then
-    standalone_gateway_port=$(getStandaloneGatewayPort)
+    standalone_gateway_port=$(getGatewayPort)
     ssh_standalone_gateway="-L localhost:$standalone_gateway_port:$IP:$standalone_gateway_port"
-    echo "$NAMESPACE.gateway:   http://$display_IP:$standalone_gateway_port/"
+    echo "$NAMESPACE.gateway:   $(getGatewayProtocol)://$display_IP:$standalone_gateway_port/"
     redis_port=$(getRedisPort)
     ssh_redis="-L localhost:$redis_port:$IP:$redis_port"
     echo "$NAMESPACE.redis:     redis-cli -h $display_IP -p $redis_port"
   elif [[ $HSBX_CHART == "tyk-data-plane" ]]; then
-    hybrid_gateway_port=$(getHybridGatewayPort)
+    hybrid_gateway_port=$(getGatewayPort)
     ssh_hybrid_gateway="-L localhost:$hybrid_gateway_port:$IP:$hybrid_gateway_port"
-    echo "$NAMESPACE.gateway:           http://$display_IP:$hybrid_gateway_port/"
-    hybrid_redis_port=$(getHybridRedisPort)
+    echo "$NAMESPACE.gateway:           $(getGatewayProtocol)://$display_IP:$hybrid_gateway_port/"
+    hybrid_redis_port=$(getRedisPort)
     ssh_hybrid_redis="-L localhost:$hybrid_redis_port:$IP:$hybrid_redis_port"
-    echo "$NAMESPACE.redis:             redis-cli -h $display_IP -p $hybrid_redis_port"
+    echo "$NAMESPACE.redis:             REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $display_IP -p $hybrid_redis_port"
   fi
   if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
     # report the ssh command to map the service ports back to localhost
@@ -936,7 +983,7 @@ function setEnvVars {
 
 # Process commands and take actions
 if [[ $# -gt 0 ]]; then
-  case $1 in 
+  case $1 in
     create)
       shift
       while getopts :C:c:D:E:hN:PpR:r:t:V:v: arg; do
@@ -949,6 +996,7 @@ if [[ $# -gt 0 ]]; then
           C)
             # this is the chart to deploy. Defaults to tyk-stack
             HSBX_CHART=$OPTARG
+            checkChartName $HSBX_CHART
             ;;
           D)
             # The size of the allocated Mongo or PG storage in GiB
@@ -1058,6 +1106,7 @@ if [[ $# -gt 0 ]]; then
           exit 1
         fi
         createNamespace
+        setHelmRelease
         # setup redis and save the passwords
         deployRedis
         deployBastion
@@ -1106,10 +1155,12 @@ if [[ $# -gt 0 ]]; then
         elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
             waitStatefulSetReady tyk-redis-master tyk-redis-replicas
             setupRemoteControlPlaneSecrets
+            setupDataPlaneSecret
         fi
-        exit
         runHelm
-        saveOrgAndAdminKey
+        if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
+          saveOrgAndAdminKey
+        fi
         echo "[INFO]$NAMESPACE"
         showTykVersions
         listPods
@@ -1162,11 +1213,7 @@ if [[ $# -gt 0 ]]; then
           echo "http://$IP:$(getDashboardPort)/"
           ;;
         [Gg]ateway)
-          if [[ $(getHTTPS) == 'true' ]]; then
-            echo "https://$IP:$(getGatewayPort)/"
-          else
-            echo "http://$IP:$(getGatewayPort)/"
-          fi
+          echo "$(getGatewayProtocol)://$IP:$(getGatewayPort)/"
           ;;
         [Rr]edis-password)
           echo $(getRedisPassword)
