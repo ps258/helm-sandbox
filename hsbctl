@@ -113,7 +113,6 @@ function help {
   name=$SCRIPTNAME
   echo "[USAGE]: $name create -v <tyk version> -t <namespace description>"
   echo "      Create a tyk instance in a namespace sandbox with the version given as a tag with -v"
-  echo "      -c The number of control plane gateway replicas to run"
   echo "      -C The chart to deploy. Defaults to tyk-stack"
   echo "         Supported charts are:"
   echo "         tyk-stack"
@@ -121,6 +120,7 @@ function help {
   echo "         tyk-data-plane"
   echo "      -D The size of the allocated Mongo or PG storage in Gi (default: ${HSBX_MAIN_DB_SIZE}Gi)"
   echo "      -E A file to read environment variables from and add them all deployments"
+  echo "      -g The number of gateway replicas to run"
   echo "      -h Enable https on gateways"
   echo "      -N Use the given namespace name rather than the next available sandbox"
   echo "         Useful when there's a need to import apis and policy YAML with set namespace"
@@ -600,10 +600,6 @@ function runHelm {
       if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
         HELM_SET_TYK_MDCB_SERVICE="--set tyk-mdcb.mdcb.service.type=$HELM_TYK_MDCB_SERVICE_TYPE"
         HELM_SET_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
-        #HELM_RELEASE_NAME=$HELM_TYKCONTROLPLANE_RELEASE_NAME
-      elif [[ $HSBX_CHART == 'tyk-stack' ]]; then
-        #HELM_RELEASE_NAME=$HELM_TYKSTACK_RELEASE_NAME
-        :
       fi
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
         --install \
@@ -644,6 +640,7 @@ function runHelm {
         --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
         --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
     elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
+      # tyk-data-plane gets its own helm command since it's quite different
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
         --install \
         --set global.remoteControlPlane.useSecretName=$HSBX_REMOTE_CONTROL_PLANE_SECRETS \
@@ -1014,13 +1011,8 @@ if [[ $# -gt 0 ]]; then
   case $1 in
     create)
       shift
-      while getopts :C:c:D:E:hN:PpR:r:t:V:v: arg; do
+      while getopts :C:D:E:g:hN:PpR:r:t:V:v: arg; do
         case $arg in
-          c)
-            # the number of gateways to deploy (these are also just gateways in the pro install)
-            # defaults to one
-            HELM_SET_TYK_GATEWAY_REPLICACOUNT="--set tyk-gateway.gateway.replicaCount=$OPTARG"
-            ;;
           C)
             # this is the chart to deploy. Defaults to tyk-stack
             HSBX_CHART=$OPTARG
@@ -1038,6 +1030,11 @@ if [[ $# -gt 0 ]]; then
               exit 1
             fi
             setEnvVars "$ENV_VAR_FILE"
+            ;;
+          g)
+            # the number of gateways to deploy has the same function for charts: tyk-stack, tyk-control-plane and tyk-data-plane
+            # defaults to one
+            HELM_SET_TYK_GATEWAY_REPLICACOUNT="--set tyk-gateway.gateway.replicaCount=$OPTARG"
             ;;
           h)
             HSBX_GATE_USE_HTTPS=true
