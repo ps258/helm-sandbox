@@ -14,12 +14,14 @@ SCRIPTDIR=$(
 SCRIPTNAME=$(basename $SCRIPTNAME)
 VERSIONFILE="$SCRIPTDIR/tyk-versions.list"
 YAMLDIR="$SCRIPTDIR/YAML"
+CLUSTER=minikube
 
 NAMESPACE_SELECTOR_LABEL="creator=hsbctl"
 ISTIO_INJECTION_LABEL='istio-injection=enabled'
 HELM_TYKSTACK_RELEASE_NAME=tykstack
 HELM_TYKCONTROLPLANE_RELEASE_NAME=tykcontrolplane
 HELM_DATAPLANE_RELEASE_NAME=tykdataplane
+HSBX_LOG_LEVEL=debug
 
 # secret things and places to store secrets
 HSBX_ADMIN_SECRET=admin_secret
@@ -70,11 +72,13 @@ HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX=0
 HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX=0
 HELM_TYK_PUMP_EXTRAENVS_NEXT_INDEX=0
 HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX=0
+HELM_TYK_MDCB_EXTRAENVS_NEXT_INDEX=0
 # These are the variables for keeping all of the extra envs in
 HELM_SET_TYK_DASHBOARD_EXTRAENVS=''
 HELM_SET_TYK_GATEWAY_EXTRAENVS=''
 HELM_SET_TYK_PUMP_EXTRAENVS=''
 HELM_SET_TYK_DEVPORTAL_EXTRAENVS=''
+HELM_SET_TYK_MDCB_EXTRAENVS=''
 
 HELM_SET_MONGO_DRIVER=''
 HELM_SET_MONGO_URL_SECRET_NAME=''
@@ -127,7 +131,7 @@ function help {
   echo "      -p Deploy with postgres not mongo"
   echo "      -P Deploy with EDP. (Implies -p)"
   echo "      -r The size of the allocated redis control or data plane storage in Gi (default: ${HSBX_REDIS_DB_SIZE}Gi)"
-  echo "      -R The remote data plane sandbox to use for a data plane deployment."
+  echo "      -R The remote control plane sandbox to use for a data plane deployment."
   echo "         Implies -C tyk-data-plane"
   echo "      -t Description of the sandbox namespace"
   echo "      -V values.yaml file to use instead of other options. Note this overrides all other Tyk options"
@@ -139,10 +143,12 @@ function help {
   echo "      Only 'values' is currently implemented"
   echo "$name logs <sandbox namespace...> <pod part name>"
   echo "      Tails the logs of the first pod that matches 'pod part name' in the namespace"
+  echo "$name init setup minikube ready to run sandboxes"
   echo "$name info <sandbox namespace...>"
   echo "      Print info detailed info on sandbox namespaces"
   echo "$name shell <sandbox namespace...> <pod part name>"
   echo "      Spawns a shell into the pod. Mostly they are now distroless but the bastion can be used"
+  echo "$name start start minikube and all namespaces"
   echo "$name version <sandbox namespace...>"
   echo "      Shows the image version in each deployment in the namespace"
 }
@@ -566,13 +572,7 @@ function getPodNames {
 
 # Process the YAML with envsubst to substitute environment variables into them
 # All exported environment varables are available to envsubst but these are the main ones
-# HSBX_GATE_VERS which has the gateway version. This is used to pull the gateway docker image
-# HSBX_GATE_EE which contains nothing for non-EE gateways and "-ee" for EE gateways
-# HSBX_DASH_VERS which has the dashboard version. This is used to pull the dashboard docker image
-# HSBX_PUMP_VERS which has the pump version. This is used to pull the pump docker image
-# HSBX_MDCB_VERS which has the MDCB version. This is used to pull the MDCB docker image
-# HSBX_EDP_VERS which has the EDP version. This is used to pull the EDP docker image
-# HSBX_NS which is the namespace for the pods etc.
+# HSBX_NS
 function applyYAMLtemplate {
   typeset YAMLfile
   typeset tmpYamlFile
@@ -581,11 +581,6 @@ function applyYAMLtemplate {
     tmpYamlFile=$(mktemp /tmp/XXXXX-$YAMLfile)
     if [[ -f $YAMLDIR/$YAMLfile ]]; then
       cat $YAMLDIR/$YAMLfile | envsubst > $tmpYamlFile
-      if [[ -n $ENV_VAR_FILE ]]; then
-        if grep -qw 'kind: Deployment' $tmpYamlFile; then
-          addGlobalEnvVars $tmpYamlFile
-        fi
-      fi
       kubectl apply -n $NAMESPACE -f $tmpYamlFile
     fi
     rm -f $tmpYamlFile
@@ -631,6 +626,7 @@ function runHelm {
         $HELM_SET_TYK_GATEWAY_EXTRAENVS \
         $HELM_SET_TYK_PUMP_EXTRAENVS \
         $HELM_SET_TYK_DEVPORTAL_EXTRAENVS \
+        $HELM_SET_TYK_MDCB_EXTRAENVS \
         $HELM_SET_TYK_MDCB_SERVICE \
         $HELM_SET_MDCB_LICENCE \
         --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
@@ -779,6 +775,26 @@ function checkChartName {
   fi
 }
 
+function checkDebugLevel {
+  case "$1" in
+    deb*|Deb*|DEB*)
+      HSBX_LOG_LEVEL=debug
+      ;;
+    inf*|Inf*|INF*)
+      HSBX_LOG_LEVEL=info
+      ;;
+    warn*|Warn*|WARN*)
+      HSBX_LOG_LEVEL=warning
+      ;;
+    err*|Err*|ERR*)
+      HSBX_LOG_LEVEL=error
+      ;;
+    *)
+      echo "[FATAL]Log level must be one of 'debug', 'info', 'warning' or 'error'"
+      ;;
+  esac
+}
+
 function getDashboardInternalURL {
   typeset namespace
   namespace=$NAMESPACE
@@ -851,6 +867,73 @@ function checkMongoShellInstalled {
     else
       MONGOSHELL=mongo
     fi
+  fi
+}
+
+function startMinikube {
+  typeset quiet
+  if [[ $# > 0 ]]; then
+    quiet=true
+  fi
+  if minikubeProfileExists; then
+    if [[ $(minikube profile list | awk '/'$CLUSTER'/ && /Stopped/ {print "Stopped"}') = 'Stopped' ]]; then
+      minikube -p $CLUSTER start
+    else
+      if [[ -z $quiet ]]; then
+        echo "[INFO]Minikube cluser '$CLUSTER' is running"
+      fi
+    fi
+  else
+    echo "[FATAL]Minikube profile '$CLUSTER' does not exist. Use '$SCRIPTNAME -C $CLUSTER init' to create it"
+  fi
+}
+
+function minikubeProfileExists {
+  if minikube profile list 2> /dev/null | grep -qw $CLUSTER; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# start minikube if it's not already running
+function setupMinikube {
+  typeset mount_command
+  mount_command=""
+  if which minikube > /dev/null 2>&1 ; then
+    if ! minikube -p $CLUSTER status > /dev/null 2>&1 ; then
+      if [[ ! -d $HOME/.tyk/plugins ]]; then
+        mkdir -p $HOME/.tyk/plugins
+      fi
+      if [[ -d $HOME/.tyk/plugins ]]; then
+        mount_command="--mount-string=$HOME/.tyk/plugins:/plugins --mount"
+      fi
+      echo "[INFO]Starting minikube cluster '$CLUSTER'"
+      minikube -p $CLUSTER start --driver docker --cpus max --memory $(free -g | awk '/Mem:/ {print $NF "g"}') --docker-opt="default-ulimit=nofile=204800:204800" $mount_command
+      minikube profile $CLUSTER
+      minikube -p $CLUSTER addons enable metrics-server
+      minikube -p $CLUSTER addons enable dashboard
+      # give it a few seconds to settle down
+      sleep 5
+      # install cert-manager now so that its ready when needed
+      kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.19.1/cert-manager.yaml --wait
+    else
+      echo "[WARN]Minikube cluster '$CLUSTER' is already running. Not setting it up again"
+    fi
+  else
+    echo "[WARN]Minikube not installed. Cannot start"
+  fi
+}
+
+# copy "$SCRIPTDIR/etc/tmp.conf" into minikube so that permanent volumes can be created
+function setupMinikubeStorage {
+  if which minikube > /dev/null 2>&1 ; then
+    if ! minikube -p $CLUSTER status > /dev/null 2>&1 ; then
+      echo "[INFO]Configuring minikube cluster '$CLUSTER' to enable permanent volumes for databases"
+      minikube -p $CLUSTER cp "$SCRIPTDIR/etc/tmp.conf" /etc/tmpfiles.d/ --user root
+    fi
+  else
+    echo "[WARN]Minikube not installed. Cannot configure"
   fi
 }
 
@@ -1006,12 +1089,32 @@ function setEnvVars {
   done
 }
 
+function setEnvVarDashboard {
+  typeset variable
+  typeset value
+  variable="$1"
+  value="$2"
+  HELM_SET_TYK_DASHBOARD_EXTRAENVS="$HELM_SET_TYK_DASHBOARD_EXTRAENVS --set tyk-dashboard.dashboard.extraEnvs[$HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX].name=$variable"
+  HELM_SET_TYK_DASHBOARD_EXTRAENVS="$HELM_SET_TYK_DASHBOARD_EXTRAENVS --set tyk-dashboard.dashboard.extraEnvs[$HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX].value=$value"
+  let HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX+=1
+}
+
+function setEnvVarGateeway {
+  typeset variable
+  typeset value
+  variable="$1"
+  value="$2"
+  HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-gateway.gateway.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].name=$variable"
+  HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-gateway.gateway.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].value=$value"
+  let HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX+=1
+}
+
 # Process commands and take actions
 if [[ $# -gt 0 ]]; then
   case $1 in
     create)
       shift
-      while getopts :C:D:E:g:hN:PpR:r:t:V:v: arg; do
+      while getopts :C:D:d:E:g:hN:PpR:r:t:V:v: arg; do
         case $arg in
           C)
             # this is the chart to deploy. Defaults to tyk-stack
@@ -1021,6 +1124,11 @@ if [[ $# -gt 0 ]]; then
           D)
             # The size of the allocated Mongo or PG storage in GiB
             HSBX_MAIN_DB_SIZE=$(echo $OPTARG | tr -cd 0-9)
+            ;;
+          d)
+            # Debug level to apply to all containers
+            HSBX_LOG_LEVEL="$OPTARG"
+            checkDebugLevel "$HSBX_LOG_LEVEL"
             ;;
           E)
             # global environment variable file
@@ -1196,32 +1304,6 @@ if [[ $# -gt 0 ]]; then
         exit 1
       fi
       ;;
-    info)
-      shift
-      if [[ $# -lt 1 ]]; then
-        # give info on all if none given
-        typeset allSandboxes
-        allSandboxes=$(getAllSandboxes)
-        if [[ $allSandboxes = '' ]]; then
-          echo "[INFO]No helm sandboxes configured"
-          exit 0
-        fi
-        set $allSandboxes
-      fi
-      for NAMESPACE in $(getNamespaceNames $*); do
-        if namespaceExists $NAMESPACE; then
-          # set HSBX_DATABASE for this namespace
-          getDatabaseType
-          echo "[INFO]$NAMESPACE"
-          showTykVersions
-          listPods
-          reportSanboxInfo
-          echo
-        else
-          echo "[WARN]Namespace '$NAMESPACE' not found"
-        fi
-      done
-      ;;
     get)
       shift
       NAMESPACE=$(getNamespaceNames $1)
@@ -1263,6 +1345,36 @@ if [[ $# -gt 0 ]]; then
           ;;
       esac
       ;;
+    info)
+      shift
+      if [[ $# -lt 1 ]]; then
+        # give info on all if none given
+        typeset allSandboxes
+        allSandboxes=$(getAllSandboxes)
+        if [[ $allSandboxes = '' ]]; then
+          echo "[INFO]No helm sandboxes configured"
+          exit 0
+        fi
+        set $allSandboxes
+      fi
+      for NAMESPACE in $(getNamespaceNames $*); do
+        if namespaceExists $NAMESPACE; then
+          # set HSBX_DATABASE for this namespace
+          getDatabaseType
+          echo "[INFO]$NAMESPACE"
+          showTykVersions
+          listPods
+          reportSanboxInfo
+          echo
+        else
+          echo "[WARN]Namespace '$NAMESPACE' not found"
+        fi
+      done
+      ;;
+    init)
+      setupMinikube
+      setupMinikubeStorage
+      ;;
     log*)
       shift
       if [[ $# -lt 2 ]]; then
@@ -1288,6 +1400,9 @@ if [[ $# -gt 0 ]]; then
         echo "[FATAL]No such ksandbox: $NAMESPACE"
       fi
       ;;
+    start)
+      startMinikube
+      ;;
     rm | del*)
       shift
       if [[ $# -lt 1 ]]; then
@@ -1301,6 +1416,10 @@ if [[ $# -gt 0 ]]; then
         fi
       done
       tidyReleasedPVCs
+      for NAMESPACE in $(getNamespaceNames $*); do
+        # minikube doesn't always remove the PVs properly. Lets get rid of them properly
+        minikube -p $CLUSTER ssh -- "test -d /var/hostpath-provisioner/$NAMESPACE/ && sudo rm -rf /var/hostpath-provisioner/$NAMESPACE/" 2>/dev/null
+      done
       ;;
     version*)
       shift
@@ -1340,4 +1459,3 @@ else
   help
   exit 1
 fi
-
