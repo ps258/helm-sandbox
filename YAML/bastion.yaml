@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bastion
+  labels:
+    app: bastion
+    plane: control
+spec:
+  replicas: 1
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: bastion
+  template:
+    metadata:
+      labels:
+        app: bastion
+        plane: control
+      annotations:
+    spec:
+      containers:
+      - image: saintpeter/bastion-9:latest
+        imagePullPolicy: IfNotPresent
+        name: bastion
+        securityContext:
+          runAsNonRoot: false
+          allowPrivilegeEscalation: true
+          privileged: true
+        command: ["/setup/entrypoint.sh"]
+        workingDir: /
+        volumeMounts:
+          - name: plugins
+            mountPath: /opt/tyk-plugins
+      volumes:
+        - name: plugins
+          hostPath:
+            path: /plugins
