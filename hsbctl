@@ -22,6 +22,12 @@ HELM_TYKSTACK_RELEASE_NAME=tykstack
 HELM_TYKCONTROLPLANE_RELEASE_NAME=tykcontrolplane
 HELM_DATAPLANE_RELEASE_NAME=tykdataplane
 HSBX_LOG_LEVEL=debug
+HSBX_GLOBAL_ENV_CONFIGMAP="hsandbox-global-env-vars"
+HSBX_DASH_ENV_CONFIGMAP="hsandbox-dashboard-env-vars"
+HSBX_GATE_ENV_CONFIGMAP="hsandbox-gate-env-vars"
+HSBX_PUMP_ENV_CONFIGMAP="hsandbox-pump-env-vars"
+HSBX_MDCB_ENV_CONFIGMAP="hsandbox-mdcb-env-vars"
+HSBX_DEVPORTAL_ENV_CONFIGMAP="hsandbox-devportal-env-vars"
 
 # secret things and places to store secrets
 HSBX_ADMIN_SECRET=admin_secret
@@ -58,6 +64,7 @@ HSBX_MAIN_DB_SIZE=5       # the size to make the mongo or postgresql DB PVC
 HSBX_PORTAL_THEMES_SIZE=2 # the size to make EDP's /opt/portal/themes volume for storing themes (not implemented yet)
 HSBX_CHART=tyk-stack
 REDIS_PASSWORD=''
+DEVPORTAL_INITDELAY=10
 
 # set the services to NodePort
 HELM_TYK_GATEWAY_SERVICE_TYPE=NodePort
@@ -86,6 +93,17 @@ HELM_SET_MONGO_URL_SECRET_KEYNAME=''
 
 HELM_SET_PG_CONNECTION_SECRET_NAME=''
 HELM_SET_PG_CONNECTION_SECRET_KEYNAME=''
+
+HELM_SET_TYK_DEVPORTAL_SERVICE=''
+HELM_SET_TYK_DEVPORTAL_IMAGE_TAG=''
+HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT=''
+HELM_SET_TYK_DEVPORTAL_LIVE_INITDELAY=''
+HELM_SET_TYK_DEVPORTAL_READY_INITDELAY=''
+
+HELM_SET_TYK_MDCB_SERVICE=''
+HELM_SET_TYK_MDCB_LICENCE=''
+
+HELM_SET_TYK_GATEWAY_REPLICACOUNT=''
 
 #REDIS_BITNAMI_CHART_VERSION="--version 19.0.2"
 #MONGO_BITNAMI_CHART_VERSION="--version 15.1.3"
@@ -186,7 +204,7 @@ function waitDeploymentReady {
   done
 }
 
-# Wait for a deployment to be ready.
+# Wait for a StatefulSet to be ready.
 function waitStatefulSetReady {
   typeset statefulsetName
   for statefulsetName in "$@"; do
@@ -594,7 +612,7 @@ function runHelm {
       # tyk-stack and tyk-control-plane are very similar so we can do them together
       if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
         HELM_SET_TYK_MDCB_SERVICE="--set tyk-mdcb.mdcb.service.type=$HELM_TYK_MDCB_SERVICE_TYPE"
-        HELM_SET_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
+        HELM_SET_TYK_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
       fi
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
         --install \
@@ -622,19 +640,23 @@ function runHelm {
         $HELM_SET_TYK_DEVPORTAL_SERVICE \
         $HELM_SET_TYK_DEVPORTAL_IMAGE_TAG \
         $HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT \
+        $HELM_SET_TYK_DEVPORTAL_LIVE_INITDELAY \
+        $HELM_SET_TYK_DEVPORTAL_READY_INITDELAY \
         $HELM_SET_TYK_DASHBOARD_EXTRAENVS \
         $HELM_SET_TYK_GATEWAY_EXTRAENVS \
         $HELM_SET_TYK_PUMP_EXTRAENVS \
         $HELM_SET_TYK_DEVPORTAL_EXTRAENVS \
         $HELM_SET_TYK_MDCB_EXTRAENVS \
         $HELM_SET_TYK_MDCB_SERVICE \
-        $HELM_SET_MDCB_LICENCE \
+        $HELM_SET_TYK_MDCB_LICENCE \
         --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
         --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
         --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
         $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
         --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
         --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
+      # set TYK_GW_ENABLEHASHEDKEYSLISTING directly in the deployment since it can't be set any other way (TT-10048)
+      kubectl set env deployment gateway-tykstack-tyk-gateway TYK_GW_ENABLEHASHEDKEYSLISTING=true -n $NAMESPACE
     elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
       # tyk-data-plane gets its own helm command since it's quite different
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
@@ -1061,7 +1083,7 @@ function tidyReleasedPVCs {
 }
 
 # reads an file containing normal var=val and converts it into 'extraEnvs' for the helm commandline
-function setEnvVars {
+function setEnvVarsFromFile {
   typeset filename
   typeset line
   typeset variable
@@ -1070,23 +1092,35 @@ function setEnvVars {
   cat "$filename" | while read -r line; do
     variable=$(echo $line | cut -d= -f1)
     value=$(echo $line | cut -d= -f2)
-    # Dashboard first
-    HELM_SET_TYK_DASHBOARD_EXTRAENVS="$HELM_SET_TYK_DASHBOARD_EXTRAENVS --set tyk-dashboard.dashboard.extraEnvs[$HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX].name=$variable"
-    HELM_SET_TYK_DASHBOARD_EXTRAENVS="$HELM_SET_TYK_DASHBOARD_EXTRAENVS --set tyk-dashboard.dashboard.extraEnvs[$HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX].value=$value"
-    let HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX+=1
-    # Gateway next
-    HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-gateway.gateway.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].name=$variable"
-    HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-gateway.gateway.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].value=$value"
-    let HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX+=1
-    # Pump next
-    HELM_SET_TYK_PUMP_EXTRAENVS="$HELM_SET_TYK_PUMP_EXTRAENVS --set tyk-pump.pump.extraEnvs[$HELM_TYK_PUMP_EXTRAENVS_NEXT_INDEX].name=$variable"
-    HELM_SET_TYK_PUMP_EXTRAENVS="$HELM_SET_TYK_PUMP_EXTRAENVS --set tyk-pump.pump.extraEnvs[$HELM_TYK_PUMP_EXTRAENVS_NEXT_INDEX].value=$value"
-    let HELM_TYK_PUMP_EXTRAENVS_NEXT_INDEX+=1
-    # Dev Portal next
-    HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].name=$variable"
-    HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=$value"
-    let HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX+=1
+    setEnvVarAll "$variable" "$value"
   done
+}
+
+function setEnvVarAll {
+  typeset variable
+  typeset value
+  variable="$1"
+  value="$2"
+  # Dashboard first
+  HELM_SET_TYK_DASHBOARD_EXTRAENVS="$HELM_SET_TYK_DASHBOARD_EXTRAENVS --set tyk-dashboard.dashboard.extraEnvs[$HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX].name=$variable"
+  HELM_SET_TYK_DASHBOARD_EXTRAENVS="$HELM_SET_TYK_DASHBOARD_EXTRAENVS --set tyk-dashboard.dashboard.extraEnvs[$HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX].value=$value"
+  let HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX+=1
+  # Gateway next
+  HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-gateway.gateway.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].name=$variable"
+  HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-gateway.gateway.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].value=$value"
+  let HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX+=1
+  # Pump next
+  HELM_SET_TYK_PUMP_EXTRAENVS="$HELM_SET_TYK_PUMP_EXTRAENVS --set tyk-pump.pump.extraEnvs[$HELM_TYK_PUMP_EXTRAENVS_NEXT_INDEX].name=$variable"
+  HELM_SET_TYK_PUMP_EXTRAENVS="$HELM_SET_TYK_PUMP_EXTRAENVS --set tyk-pump.pump.extraEnvs[$HELM_TYK_PUMP_EXTRAENVS_NEXT_INDEX].value=$value"
+  let HELM_TYK_PUMP_EXTRAENVS_NEXT_INDEX+=1
+  # Dev Portal next
+  HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].name=$variable"
+  HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=$value"
+  let HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX+=1
+  # MDCB last
+  HELM_SET_TYK_MDCB_EXTRAENVS="$HELM_SET_TYK_MDCB_EXTRAENVS --set tyk-mdcb.mdcb.extraEnvs[$HELM_TYK_MDCB_EXTRAENVS_NEXT_INDEX].name=$variable"
+  HELM_SET_TYK_MDCB_EXTRAENVS="$HELM_SET_TYK_MDCB_EXTRAENVS --set tyk-mdcb.mdcb.extraEnvs[$HELM_TYK_MDCB_EXTRAENVS_NEXT_INDEX].value=$value"
+  let HELM_TYK_MDCB_EXTRAENVS_NEXT_INDEX+=1
 }
 
 function setEnvVarDashboard {
@@ -1137,7 +1171,7 @@ if [[ $# -gt 0 ]]; then
               echo "[FATAL]Cannot read environment variable file: '$ENV_VAR_FILE'"
               exit 1
             fi
-            setEnvVars "$ENV_VAR_FILE"
+            setEnvVarsFromFile "$ENV_VAR_FILE"
             ;;
           g)
             # the number of gateways to deploy has the same function for charts: tyk-stack, tyk-control-plane and tyk-data-plane
@@ -1195,6 +1229,7 @@ if [[ $# -gt 0 ]]; then
             ;;
         esac
       done
+      setEnvVarAll TYK_LOGLEVEL $HSBX_LOG_LEVEL
       if [[ -n $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE ]]; then
         if ! namespaceExists $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE; then
           echo "[FATAL]Control plane namespace '$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE' does not exist"
@@ -1245,8 +1280,8 @@ if [[ $# -gt 0 ]]; then
         deployBastion
         if [[ -n $ENV_VAR_FILE ]]; then
           # create a config map to hold the environment variables
-          echo "[INFO]Adding environment variables from $ENV_VAR_FILE to configmap sandbox-env-vars"
-          kubectl create configmap sandbox-env-vars --from-env-file=$ENV_VAR_FILE -n $NAMESPACE
+          echo "[INFO]Adding environment variables from $ENV_VAR_FILE to configmap $HSBX_GLOBAL_ENV_CONFIGMAP"
+          kubectl create configmap $HSBX_GLOBAL_ENV_CONFIGMAP --from-env-file=$ENV_VAR_FILE -n $NAMESPACE
         fi
         if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
           # setup the secrets that are needed to bootstrap a tyk stack
@@ -1272,6 +1307,8 @@ if [[ $# -gt 0 ]]; then
             HELM_SET_TYK_DEVPORTAL_IMAGE_TAG="--set tyk-dev-portal.image.tag=$HSBX_DEVPORTAL_VERS"
             HELM_SET_TYK_DEVPORTAL_SERVICE="--set tyk-dev-portal.service.type=NodePort"
             HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT="--set tyk-dev-portal.database.dialect=postgres"
+            HELM_SET_TYK_DEVPORTAL_LIVE_INITDELAY="--set tyk-dev-portal.livenessProbe.initialDelaySeconds=$DEVPORTAL_INITDELAY"
+            HELM_SET_TYK_DEVPORTAL_READY_INITDELAY="--set tyk-dev-portal.readinessProbe.initialDelaySeconds=$DEVPORTAL_INITDELAY"
             # set PORTAL_DISABLE_CSRF_CHECK=true by default
             HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].name=PORTAL_DISABLE_CSRF_CHECK"
             HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=true"
@@ -1280,11 +1317,13 @@ if [[ $# -gt 0 ]]; then
           else
             HELM_TYK_DEVPORTAL_ENABLED=false
           fi
-          # turn on TYK_GW_ENABLEHASHEDKEYSLISTING=true because the chart doesn't do that
-          HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].name=TYK_GW_ENABLEHASHEDKEYSLISTING"
-          HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].value=true"
+          # turn on TYK_GW_ENABLEHASHEDKEYSLISTING=true in the gateway because the chart doesn't do that TT-10048
+          # I was never able to make this work so I just change the deployment with kubectl once the helm command is complete
+          # No matter what I did the value of "true" always caused an error, no amount of escaping or quoting helped.
+          #HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-gateway.gateway.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].name=TYK_GW_ENABLEHASHEDKEYSLISTING"
+          #HELM_SET_TYK_GATEWAY_EXTRAENVS="$HELM_SET_TYK_GATEWAY_EXTRAENVS --set tyk-gateway.gateway.extraEnvs[$HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX].value="'"true"'
           # remember to increment HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX so that we keep in sync
-          let HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX+=1
+          #let HELM_TYK_GATEWAY_EXTRAENVS_NEXT_INDEX+=1
         elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
             waitStatefulSetReady tyk-redis-master tyk-redis-replicas
             setupRemoteControlPlaneSecrets
