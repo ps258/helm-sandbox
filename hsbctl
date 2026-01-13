@@ -63,6 +63,7 @@ HSBX_REDIS_DB_SIZE=1      # the size to make the redis PVC for both control plan
 HSBX_MAIN_DB_SIZE=5       # the size to make the mongo or postgresql DB PVC
 HSBX_PORTAL_THEMES_SIZE=2 # the size to make EDP's /opt/portal/themes volume for storing themes (not implemented yet)
 HSBX_CHART=tyk-stack
+HSBX_HELM_VERSION=""
 REDIS_PASSWORD=''
 DEVPORTAL_INITDELAY=10
 
@@ -173,6 +174,101 @@ function help {
 
 function listPods {
   kubectl get pods -n $NAMESPACE
+}
+
+# converts API definition format from the one given using 'export' on the dashboard to the one expected when importing via /api/apis
+function createApiDefintion {
+  typeset APIfile
+  APIfile="$1"
+  echo '{'
+  echo '  "api_model": {},'
+  echo '  "api_definition":' $(<"$APIfile") ','
+  echo '  "hook_references": [],'
+  echo '  "is_site": false,'
+  echo '  "sort_by": 0'
+  echo '}'
+}
+
+# inject an API definition into a running sandbox
+function publishAPIs {
+  typeset APIfile
+  setHelmChart
+  setHelmRelease
+  if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
+    typeset adminKey
+    typeset DashboardPort
+    adminKey=$(getAdminUserKey)
+    DashboardPort=$(getDashboardPort)
+    if [[ -n $adminKey ]]; then
+      for APIfile in "$@"; do
+        echo "[INFO]Publishing API $APIfile"
+        if [[ $(awk '!/^\s+$/ {print substr($1,1,1); exit}' $APIfile) == '{' ]] ; then
+          # We're dealing with a JSON file because the first character in the file is a '{'
+          if [[ $(jq 'has("oas")' $APIfile) == "true" ]]; then
+            mv $APIfile tmpfile
+            jq .oas tmpfile > $APIfile
+            rm tmpfile
+            echo curl -X POST -H \"Content-Type: application/json\" -H \"Authorization: $adminKey\" http://$IP:$DashboardPort/api/apis/oas -d@\"$APIfile\"
+            curl -X POST -H "Content-Type: application/json" -H "Authorization: $adminKey" http://$IP:$DashboardPort/api/apis/oas -d@"$APIfile"
+          elif grep -q x-tyk-api-gateway "$APIfile"; then
+            # OAS
+            echo curl -X POST -H \"Content-Type: application/json\" -H \"Authorization: $adminKey\" http://$IP:$DashboardPort/api/apis/oas -d@\"$APIfile\"
+            curl -X POST -H "Content-Type: application/json" -H "Authorization: $adminKey" http://$IP:$DashboardPort/api/apis/oas -d@"$APIfile"
+          elif grep -q api_definition "$APIfile"; then
+            # deal with the files that are a copy and paste of the API JSON from the dashboard
+            echo curl -s -X POST -H \"Content-Type: application/json\" -H \"Authorization: $adminKey\" http://$IP:$DashboardPort/api/apis -d @\"$APIfile\"
+            curl -s -X POST -H "Content-Type: application/json" -H "Authorization: $adminKey" http://$IP:$DashboardPort/api/apis -d @"$APIfile"
+          else
+            # deal with the files that are exported APIs from the dashboard
+            APIfileName=$(mktemp "/tmp/$(basename '$APIfile').XXXXXX")
+            createApiDefintion "$APIfile" > $APIfileName
+            curl -s -X POST -H "Content-Type: application/json" -H "Authorization: $adminKey" http://$IP:$DashboardPort/api/apis -d @"$APIfileName"
+            \rm $APIfileName
+          fi
+        else
+          # We're probably dealing with a YAML file since the first character in the file is NOT a '{'
+          if grep -q x-tyk-api-gateway "$APIfile"; then
+            # Tyk OAS
+            echo curl -X POST -H \"Content-Type: application/x-yaml\" -H \"Authorization: $adminKey\" http://$IP:$DashboardPort/api/apis/oas --data-binary @$APIfile
+            curl -X POST -H "Content-Type: application/x-yaml" -H "Authorization: $adminKey" http://$IP:$DashboardPort/api/apis/oas --data-binary @$APIfile
+            echo
+          else
+            # Standard OAS
+            echo curl -X POST -H \"Content-Type: application/x-yaml\" -H \"Authorization: $adminKey\" http://$IP:$DashboardPort/api/apis/oas/import --data-binary @$APIfile
+            curl -X POST -H "Content-Type: application/x-yaml" -H "Authorization: $adminKey" http://$IP:$DashboardPort/api/apis/oas/import --data-binary @$APIfile
+            echo
+          fi
+        fi
+      done
+    else
+      echo "[WARN]Cannot get Adminkey so cannot publishAPIs"
+    fi
+  else
+    # stand alone (ce)
+    typeset gatewaySecret
+    typeset gatewayPort
+    typeset APIs
+    typeset API
+    gatewaySecret=Secret
+    gatewayPort=$(getStandaloneGatewayPort)
+    APIs=""
+    API=""
+    # load the APIs
+    for APIfile in "$@"; do
+      echo "[INFO]Publishing API $APIfile"
+      curl -sH "x-tyk-authorization: $gatewaySecret" -d @$APIfile http://$IP:$gatewayPort/tyk/apis
+      echo "[INFO]Hot reloading the gateway"
+      curl -sH "x-tyk-authorization: $gatewaySecret" http://$IP:$gatewayPort/tyk/reload/group
+    done
+    # report on APIs reloaded
+    sleep 10
+    curl -sH "x-tyk-authorization: $gatewaySecret" http://$IP:$gatewayPort/tyk/apis | jq -r '.[].name' | while read API; do
+      APIs="'$API' $APIs"
+    done
+    if [[ -n $APIs ]]; then
+      echo "[INFO]Apis published: $APIs"
+    fi
+  fi
 }
 
 # Wait for something to be ready
@@ -614,7 +710,7 @@ function runHelm {
         HELM_SET_TYK_MDCB_SERVICE="--set tyk-mdcb.mdcb.service.type=$HELM_TYK_MDCB_SERVICE_TYPE"
         HELM_SET_TYK_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
       fi
-      helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
+      helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
         --install \
         --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
         --set global.adminUser.email=$ADMIN_EMAIL \
@@ -659,7 +755,7 @@ function runHelm {
       kubectl set env deployment gateway-tykstack-tyk-gateway TYK_GW_ENABLEHASHEDKEYSLISTING=true -n $NAMESPACE
     elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
       # tyk-data-plane gets its own helm command since it's quite different
-      helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
+      helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
         --install \
         --set global.remoteControlPlane.useSecretName=$HSBX_REMOTE_CONTROL_PLANE_SECRETS \
         --set global.remoteControlPlane.useSSL=false \
@@ -698,7 +794,7 @@ function getDescription {
 }
 
 # return the chart used to create the sandbox
-function getChart {
+function getHelmChart {
   typeset namespace
   namespace=$NAMESPACE
   if [[ $# > 0 ]]; then
@@ -742,7 +838,7 @@ function getHelmRelease {
   if [[ $# > 0 ]]; then
     namespace="$1"
   fi
-  hsbx_chart=$(getChart $namespace)
+  hsbx_chart=$(getHelmChart $namespace)
   case $hsbx_chart in
     tyk-stack)
       echo $HELM_TYKSTACK_RELEASE_NAME
@@ -757,7 +853,21 @@ function getHelmRelease {
 }
 
 function setHelmRelease {
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
   HELM_RELEASE_NAME=$(getHelmRelease)
+}
+
+function setHelmChart {
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
+  HELM_CHART=$(getHelmChart)
 }
 
 function getOrgID {
@@ -1001,7 +1111,7 @@ function reportSanboxInfo {
   typeset ssh_hybrid_gateway; typeset hybrid_gateway_port
   typeset ssh_hybrid_redis; typeset hybrid_redis_port
   typeset display_IP
-  HSBX_CHART=$(getChart)
+  HSBX_CHART=$(getHelmChart)
   HELM_RELEASE_NAME=$(getHelmRelease)
   HSBX_HAS_EDP=$(getEDPversion)
   if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
@@ -1010,7 +1120,7 @@ function reportSanboxInfo {
     display_IP=$IP
   fi
   echo "$NAMESPACE.Description:       $(getDescription)"
-  echo "$NAMESPACE.Chart:             $(getChart)"
+  echo "$NAMESPACE.Chart:             $(getHelmChart)"
   if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
     dashboard_port=$(getDashboardPort)
     ssh_dashboard="-L localhost:$dashboard_port:$IP:$dashboard_port"
@@ -1148,7 +1258,7 @@ if [[ $# -gt 0 ]]; then
   case $1 in
     create)
       shift
-      while getopts :C:D:d:E:g:hN:PpR:r:t:V:v: arg; do
+      while getopts :C:D:d:E:g:hH:N:PpR:r:t:V:v: arg; do
         case $arg in
           C)
             # this is the chart to deploy. Defaults to tyk-stack
@@ -1180,6 +1290,10 @@ if [[ $# -gt 0 ]]; then
             ;;
           h)
             HSBX_GATE_USE_HTTPS=true
+            ;;
+          H)
+            # use the specified version. Otherwise default to the latest
+            HSBX_HELM_VERSION="--version $OPTARG"
             ;;
           N)
             # specify a particular namespace
@@ -1235,7 +1349,7 @@ if [[ $# -gt 0 ]]; then
           echo "[FATAL]Control plane namespace '$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE' does not exist"
           exit 1
         fi
-        if [[ $(getChart $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE) != 'tyk-control-plane' ]]; then
+        if [[ $(getHelmChart $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE) != 'tyk-control-plane' ]]; then
           echo "[FATAL]Namespace '$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE' is not a tyk-control-plane deployment"
           exit 1
         fi
@@ -1372,7 +1486,7 @@ if [[ $# -gt 0 ]]; then
           echo "REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $IP -p $(getRedisPort)"
           ;;
         [Cc]hart)
-          getChart
+          getHelmChart
           ;;
         [Rr]elease)
           getHelmRelease
@@ -1423,6 +1537,20 @@ if [[ $# -gt 0 ]]; then
       NAMESPACE=$(getNamespaceNames $1)
       shift
       showLogs $1
+      ;;
+    publish)
+      shift
+      if [[ $# -lt 1 ]]; then
+        echo "[FATAL]Must provide namespace"
+        exit 1
+      fi
+      NAMESPACE=$(getNamespaceNames $1)
+      shift
+      if namespaceExists $NAMESPACE; then
+        publishAPIs "$@"
+      else
+        echo "[FATAL]No such ksandbox: $NAMESPACE"
+      fi
       ;;
     shell)
       shift
