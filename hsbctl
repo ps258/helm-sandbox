@@ -14,6 +14,7 @@ SCRIPTDIR=$(
 SCRIPTNAME=$(basename $SCRIPTNAME)
 VERSIONFILE="$SCRIPTDIR/tyk-versions.list"
 YAMLDIR="$SCRIPTDIR/YAML"
+APIDIR="$SCRIPTDIR/APIs"
 CLUSTER=minikube
 
 NAMESPACE_SELECTOR_LABEL="creator=hsbctl"
@@ -1447,6 +1448,7 @@ if [[ $# -gt 0 ]]; then
         runHelm
         if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
           saveOrgAndAdminKey
+          publishAPIs $APIDIR/*.yaml
         fi
         echo "[INFO]$NAMESPACE"
         showTykVersions
