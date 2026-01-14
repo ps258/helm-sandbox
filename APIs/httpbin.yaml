@@ -1,0 +1,24 @@
+components: {}
+info:
+  title: httpbin
+  version: Default
+openapi: 3.0.6
+paths: {}
+x-tyk-api-gateway:
+  info:
+    dbId: 696648b424c5d00001fdcbd4
+    id: 7653367df2104fe152d994ac54aa30f2
+    name: httpbin
+    orgId: 69663ef7fd329b00011ba1ef
+    state:
+      active: true
+  middleware:
+    global:
+      trafficLogs:
+        enabled: true
+  server:
+    listenPath:
+      strip: true
+      value: /httpbin/
+  upstream:
+    url: http://httpbin.org/anything
