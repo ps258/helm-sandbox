@@ -1,5 +1,8 @@
 #!/bin/ksh
 
+PATH=/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin:$PATH
+CDPATH=
+
 # install cert manager if needed
 #if ! kubectl get ns | grep -qw cert-manager; then
 #  echo kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.19.1/cert-manager.yaml --wait
@@ -15,7 +18,24 @@ SCRIPTNAME=$(basename $SCRIPTNAME)
 VERSIONFILE="$SCRIPTDIR/tyk-versions.list"
 YAMLDIR="$SCRIPTDIR/YAML"
 APIDIR="$SCRIPTDIR/APIs"
-CLUSTER=minikube
+
+# check for -C option to specify the cluster
+if [[ $# -ge 2 ]]; then
+  if [[ $1 == '-C' ]]; then
+    HSBCTL_CLUSTER=$2
+    shift; shift
+  fi
+fi
+
+if [[ -z $HSBCTL_CLUSTER ]]; then
+  if [[ -z $CLUSTER ]]; then
+    CLUSTER=minikube
+  fi
+else
+  CLUSTER=$HSBCTL_CLUSTER
+fi
+alias kubectl="minikube kubectl -- --cluster=$CLUSTER"
+alias helm="helm --kube-context $CLUSTER"
 
 NAMESPACE_SELECTOR_LABEL="creator=hsbctl"
 ISTIO_INJECTION_LABEL='istio-injection=enabled'
