@@ -64,6 +64,7 @@ HSBX_REDIS_DB_SIZE=1      # the size to make the redis PVC for both control plan
 HSBX_MAIN_DB_SIZE=5       # the size to make the mongo or postgresql DB PVC
 HSBX_PORTAL_THEMES_SIZE=2 # the size to make EDP's /opt/portal/themes volume for storing themes (not implemented yet)
 HSBX_CHART=tyk-stack
+HSBX_GATE_BUNDLEBASEDIR=''
 HSBX_HELM_VERSION=""
 REDIS_PASSWORD=''
 DEVPORTAL_INITDELAY=10
@@ -363,6 +364,7 @@ function loadVersions {
   IFS=,
   echo "$line" | read version gwVers dshbVers pumpVers TIBvers syncVers MDCBvers EDPvers
   export HSBX_GATE_PLUGIN_DIR="$gwVers"
+  HSBX_GATE_BUNDLEBASEDIR="http://bastion:8000/$HSBX_GATE_PLUGIN_DIR"
   if [[ ! -d $HOME/.tyk/plugins/$HSBX_GATE_PLUGIN_DIR ]]; then
     mkdir -p $HOME/.tyk/plugins/$HSBX_GATE_PLUGIN_DIR
   fi
@@ -753,7 +755,6 @@ function runHelm {
         --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
         --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
       # set TYK_GW_ENABLEHASHEDKEYSLISTING directly in the deployment since it can't be set any other way (TT-10048)
-      kubectl set env deployment gateway-tykstack-tyk-gateway TYK_GW_ENABLEHASHEDKEYSLISTING=true -n $NAMESPACE
     elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
       # tyk-data-plane gets its own helm command since it's quite different
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
@@ -776,6 +777,12 @@ function runHelm {
         --set tyk-pump.pump.hybridPump.enableAggregateAnalytics=false \
         --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
     fi
+    # set the things that can't be set with environment variables because it seems impossible to set a value to true
+    # it seems that the only fix for this is to use valueFrom since envFrom is only supported with operator
+    kubectl set env deployment gateway-$HELM_RELEASE_NAME-tyk-gateway \
+      TYK_GW_ENABLEHASHEDKEYSLISTING=true \
+      TYK_GW_ENABLEBUNDLEDOWNLOADER=true \
+      -n $NAMESPACE
   else
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
     helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
@@ -1240,11 +1247,11 @@ function setEnvVarDashboard {
   variable="$1"
   value="$2"
   HELM_SET_TYK_DASHBOARD_EXTRAENVS="$HELM_SET_TYK_DASHBOARD_EXTRAENVS --set tyk-dashboard.dashboard.extraEnvs[$HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX].name=$variable"
-  HELM_SET_TYK_DASHBOARD_EXTRAENVS="$HELM_SET_TYK_DASHBOARD_EXTRAENVS --set tyk-dashboard.dashboard.extraEnvs[$HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX].value=$value"
+  HELM_SET_TYK_DASHBOARD_EXTRAENVS="$HELM_SET_TYK_DASHBOARD_EXTRAENVS --set tyk-dashboard.dashboard.extraEnvs[$HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX].value=\"$value\""
   let HELM_TYK_DASHBOARD_EXTRAENVS_NEXT_INDEX+=1
 }
 
-function setEnvVarGateeway {
+function setEnvVarGateway {
   typeset variable
   typeset value
   variable="$1"
@@ -1390,6 +1397,8 @@ if [[ $# -gt 0 ]]; then
         fi
         createNamespace
         setHelmRelease
+        #setEnvVarGateway TYK_GW_ENABLEBUNDLEDOWNLOADER true
+        setEnvVarGateway TYK_GW_BUNDLEBASEURL $HSBX_GATE_BUNDLEBASEDIR
         # setup redis and save the passwords
         deployRedis
         deployBastion
