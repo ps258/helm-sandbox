@@ -1134,21 +1134,20 @@ function reportSanboxInfo {
   # envs to hold ssh port forwarding details for when we're on EC2
   typeset ssh_dashboard; typeset dashboard_port
   typeset ssh_edp; typeset edp_port
-  typeset ssh_gateway; typeset gateway_port
-  typeset ssh_mdcb; typeset mdcb_port
+  typeset ssh_gateway; typeset gateway_port; typeset gateway_protocol
+  typeset ssh_mdcb; typeset mdcb_port; typeset mdcb_healthport
   typeset ssh_mongodb; typeset mongodb_port
-  typeset ssh_postgres; typeset postgres_port
-  typeset ssh_redis; typeset redis_port
+  typeset ssh_postgres; typeset postgres_port; typeset postgres_password
+  typeset ssh_redis; typeset redis_port; typeset redis_password
   typeset ssh_standalone_gateway; typeset standalone_gateway_port
   typeset ssh_hybrid_gateway; typeset hybrid_gateway_port
   typeset ssh_hybrid_redis; typeset hybrid_redis_port
-  typeset display_IP
+  typeset display_IP; typeset isEC2
   HSBX_CHART=$(getHelmChart)
   HELM_RELEASE_NAME=$(getHelmRelease)
   HSBX_HAS_EDP=$(getEDPversion)
   if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
-    display_IP=localhost
-  else
+    isEC2=True
     display_IP=$IP
   fi
   echo "$NAMESPACE.Description:       $(getDescription)"
@@ -1156,52 +1155,92 @@ function reportSanboxInfo {
   if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
     dashboard_port=$(getDashboardPort)
     ssh_dashboard="-L localhost:$dashboard_port:$IP:$dashboard_port"
-    echo "$NAMESPACE.dashboard:         http://$display_IP:$dashboard_port/"
+    echo "$NAMESPACE.dashboard:         http://$IP:$dashboard_port/"
+    if [[ -n $isEC2 ]]; then
+      echo "$NAMESPACE.dashboard:             http://localhost:$dashboard_port/"
+    fi
     if [[ $HSBX_HAS_EDP != "null" ]]; then
       edp_port=$(getPortalPort)
       ssh_edp="-L localhost:$edp_port:$IP:$edp_port"
-      echo "$NAMESPACE.portal:            http://$display_IP:$edp_port/"
+      echo "$NAMESPACE.portal:            http://$IP:$edp_port/"
+      if [[ -n $isEC2 ]]; then
+        echo "$NAMESPACE.portal:            http://localhost:$edp_port/"
+      fi
     fi
     gateway_port=$(getGatewayPort)
+    gateway_protocol=$(getGatewayProtocol)
     ssh_gateway="-L localhost:$gateway_port:$IP:$gateway_port"
-    echo "$NAMESPACE.gateway:           $(getGatewayProtocol)://$display_IP:$gateway_port/"
+    echo "$NAMESPACE.gateway:           $gateway_protocol://$IP:$gateway_port/"
+    if [[ -n $isEC2 ]]; then
+      echo "$NAMESPACE.gateway:               $gateway_protocol://localhost:$gateway_port/"
+    fi
     if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
       mdcb_port=$(getMDCBPort)
-      ssh_mdcb="-L localhost:$mdcb_port:$IP:$mdcb_port"
-      echo "$NAMESPACE.MDCBport:          $display_IP:$mdcb_port http://$display_IP:$(getMDCBHealthPort)/health"
+      mdcb_healthport=$(getMDCBHealthPort)
+      ssh_mdcb="-L localhost:$mdcb_port:$IP:$mdcb_port -L -L localhost:$mdcb_healthport:$IP:$mdcb_healthport"
+      echo "$NAMESPACE.MDCBport:          $IP:$mdcb_port http://$IP:$mdcb_healthport/health"
+      if [[ -n $isEC2 ]]; then
+        echo "$NAMESPACE.MDCBport:              localhost:$mdcb_port http://localhost:$mdcb_healthport/health"
+      fi
     fi
     if [[ $HSBX_DATABASE == 'mongo' ]]; then
       checkMongoShellInstalled
       mongodb_port=$(getMongoPort)
       ssh_mongodb="-L localhost:$mongodb_port:$IP:$mongodb_port"
-      echo "$NAMESPACE.mongo:             $MONGOSHELL --quiet $(getMongoExternalURL $display_IP $mongodb_port)"
+      echo "$NAMESPACE.mongo:             $MONGOSHELL --quiet $(getMongoExternalURL $IP $mongodb_port)"
+      if [[ -n $isEC2 ]]; then
+        echo "$NAMESPACE.mongo:                 $MONGOSHELL --quiet $(getMongoExternalURL localhost $mongodb_port)"
+      fi
     elif [[ $HSBX_DATABASE == 'postgres' ]]; then
       postgres_port=$(getPostgresPort)
+      postgres_password=$(getPostgressPassword)
       ssh_postgres="-L localhost:$postgres_port:$IP:$postgres_port"
-      echo "$NAMESPACE.postgres:          PGPASSWORD=$(getPostgressPassword) psql --username=$HSBX_PGUSER --dbname=$HSBX_PGDB --host=$display_IP --port=$postgres_port"
+      echo "$NAMESPACE.postgres:          PGPASSWORD=$postgres_password psql --username=$HSBX_PGUSER --dbname=$HSBX_PGDB --host=$IP --port=$postgres_port"
+      if [[ -n $isEC2 ]]; then
+        echo "$NAMESPACE.postgres:              PGPASSWORD=$postgres_password psql --username=$HSBX_PGUSER --dbname=$HSBX_PGDB --host=localhost --port=$postgres_port"
+      fi
     fi
     redis_port=$(getRedisPort)
+    redis_password=$(getRedisPassword)
     ssh_redis="-L localhost:$redis_port:$IP:$redis_port"
-    echo "$NAMESPACE.redis:             REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $display_IP -p $redis_port"
+    echo "$NAMESPACE.redis:             REDISCLI_AUTH=$redis_password redis-cli -h $IP -p $redis_port"
+    if [[ -n $isEC2 ]]; then
+      echo "$NAMESPACE.redis:                 REDISCLI_AUTH=$redis_password redis-cli -h localhost -p $redis_port"
+    fi
     echo "$NAMESPACE.AdminKey:          $(getAdminUserKey)"
     echo "$NAMESPACE.OrgID:             $(getOrgID)"
   elif [[ $HSBX_CHART == "tyk-gateway" ]]; then
     standalone_gateway_port=$(getGatewayPort)
     ssh_standalone_gateway="-L localhost:$standalone_gateway_port:$IP:$standalone_gateway_port"
-    echo "$NAMESPACE.gateway:   $(getGatewayProtocol)://$display_IP:$standalone_gateway_port/"
+    gateway_protocol=$(getGatewayProtocol)
+    echo "$NAMESPACE.gateway:   $gateway_protocol://$IP:$standalone_gateway_port/"
+    if [[ -n $isEC2 ]]; then
+      echo "$NAMESPACE.gateway:   $gateway_protocol://localhost:$standalone_gateway_port/"
+    fi
     redis_port=$(getRedisPort)
     ssh_redis="-L localhost:$redis_port:$IP:$redis_port"
-    echo "$NAMESPACE.redis:     redis-cli -h $display_IP -p $redis_port"
+    echo "$NAMESPACE.redis:     redis-cli -h $IP -p $redis_port"
+    if [[ -n $isEC2 ]]; then
+      echo "$NAMESPACE.redis:     redis-cli -h localhost -p $redis_port"
+    fi
   elif [[ $HSBX_CHART == "tyk-data-plane" ]]; then
     echo "$NAMESPACE.ControlPlane:      $(getControlPlaneNamespace)"
     hybrid_gateway_port=$(getGatewayPort)
+    gateway_protocol=$(getGatewayProtocol)
     ssh_hybrid_gateway="-L localhost:$hybrid_gateway_port:$IP:$hybrid_gateway_port"
-    echo "$NAMESPACE.gateway:           $(getGatewayProtocol)://$display_IP:$hybrid_gateway_port/"
+    echo "$NAMESPACE.gateway:           $gateway_protocol://$IP:$hybrid_gateway_port/"
+    if [[ -n $isEC2 ]]; then
+      echo "$NAMESPACE.gateway:           $gateway_protocol://localhost:$hybrid_gateway_port/"
+    fi
     hybrid_redis_port=$(getRedisPort)
+    redis_password=$(getRedisPassword)
     ssh_hybrid_redis="-L localhost:$hybrid_redis_port:$IP:$hybrid_redis_port"
-    echo "$NAMESPACE.redis:             REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $display_IP -p $hybrid_redis_port"
+    echo "$NAMESPACE.redis:             REDISCLI_AUTH=$redis_password redis-cli -h $IP -p $hybrid_redis_port"
+    if [[ -n $isEC2 ]]; then
+      echo "$NAMESPACE.redis:             REDISCLI_AUTH=$redis_password redis-cli -h localhost -p $hybrid_redis_port"
+    fi
   fi
-  if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
+  if [[ -n $isEC2 ]]; then
     # report the ssh command to map the service ports back to localhost
     echo "$NAMESPACE.ssh                $(echo ssh $ssh_dashboard $ssh_edp $ssh_gateway $ssh_mdcb $ssh_mongodb $ssh_postgres $ssh_redis $ssh_standalone_gateway $ssh_hybrid_gateway $ssh_hybrid_redis) <aws hostname>"
   fi
