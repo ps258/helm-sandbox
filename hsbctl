@@ -1237,7 +1237,7 @@ function reportSanboxInfo {
     ssh_hybrid_redis="-L localhost:$hybrid_redis_port:$IP:$hybrid_redis_port"
     echo "$NAMESPACE.redis:             REDISCLI_AUTH=$redis_password redis-cli -h $IP -p $hybrid_redis_port"
     if [[ -n $isEC2 ]]; then
-      echo "$NAMESPACE.redis:             REDISCLI_AUTH=$redis_password redis-cli -h localhost -p $hybrid_redis_port"
+      echo "$NAMESPACE.redis:                 REDISCLI_AUTH=$redis_password redis-cli -h localhost -p $hybrid_redis_port"
     fi
   fi
   if [[ -n $isEC2 ]]; then
