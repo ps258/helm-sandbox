@@ -1230,7 +1230,7 @@ function reportSanboxInfo {
     ssh_hybrid_gateway="-L localhost:$hybrid_gateway_port:$IP:$hybrid_gateway_port"
     echo "$NAMESPACE.gateway:           $gateway_protocol://$IP:$hybrid_gateway_port/"
     if [[ -n $isEC2 ]]; then
-      echo "$NAMESPACE.gateway:           $gateway_protocol://localhost:$hybrid_gateway_port/"
+      echo "$NAMESPACE.gateway:               $gateway_protocol://localhost:$hybrid_gateway_port/"
     fi
     hybrid_redis_port=$(getRedisPort)
     redis_password=$(getRedisPassword)
