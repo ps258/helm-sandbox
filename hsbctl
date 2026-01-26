@@ -1177,7 +1177,7 @@ function reportSanboxInfo {
     if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
       mdcb_port=$(getMDCBPort)
       mdcb_healthport=$(getMDCBHealthPort)
-      ssh_mdcb="-L localhost:$mdcb_port:$IP:$mdcb_port -L -L localhost:$mdcb_healthport:$IP:$mdcb_healthport"
+      ssh_mdcb="-L localhost:$mdcb_port:$IP:$mdcb_port -L localhost:$mdcb_healthport:$IP:$mdcb_healthport"
       echo "$NAMESPACE.MDCBport:          $IP:$mdcb_port http://$IP:$mdcb_healthport/health"
       if [[ -n $isEC2 ]]; then
         echo "$NAMESPACE.MDCBport:              localhost:$mdcb_port http://localhost:$mdcb_healthport/health"
