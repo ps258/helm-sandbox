@@ -267,24 +267,22 @@ function publishAPIs {
     fi
   else
     # stand alone (ce)
-    typeset gatewaySecret
     typeset gatewayPort
     typeset APIs
     typeset API
-    gatewaySecret=Secret
     gatewayPort=$(getStandaloneGatewayPort)
     APIs=""
     API=""
     # load the APIs
     for APIfile in "$@"; do
       echo "[INFO]Publishing API $APIfile"
-      curl -sH "x-tyk-authorization: $gatewaySecret" -d @$APIfile http://$IP:$gatewayPort/tyk/apis
+      curl -sH "x-tyk-authorization: $HSBX_GATE_SECRET" -d @$APIfile http://$IP:$gatewayPort/tyk/apis
       echo "[INFO]Hot reloading the gateway"
-      curl -sH "x-tyk-authorization: $gatewaySecret" http://$IP:$gatewayPort/tyk/reload/group
+      curl -sH "x-tyk-authorization: $HSBX_GATE_SECRET" http://$IP:$gatewayPort/tyk/reload/group
     done
     # report on APIs reloaded
     sleep 10
-    curl -sH "x-tyk-authorization: $gatewaySecret" http://$IP:$gatewayPort/tyk/apis | jq -r '.[].name' | while read API; do
+    curl -sH "x-tyk-authorization: $HSBX_GATE_SECRET" http://$IP:$gatewayPort/tyk/apis | jq -r '.[].name' | while read API; do
       APIs="'$API' $APIs"
     done
     if [[ -n $APIs ]]; then
@@ -736,6 +734,7 @@ function runHelm {
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
         --install \
         --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
+        --set .global.mtls.privateCertificateEncodingSecret=$HSBX_GATE_SECRET \
         --set global.adminUser.email=$ADMIN_EMAIL \
         --set global.secrets.useSecretName=$HSBX_TYK_K8S_SECRETS \
         --set global.components.operator=false \
