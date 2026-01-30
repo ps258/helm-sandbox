@@ -1533,6 +1533,7 @@ if [[ $# -gt 0 ]]; then
     get)
       shift
       NAMESPACE=$(getNamespaceNames $1)
+      HELM_RELEASE_NAME=$(getHelmRelease)
       shift
       case $1 in
         [Vv]alues)
