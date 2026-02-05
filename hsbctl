@@ -1141,13 +1141,12 @@ function reportSanboxInfo {
   typeset ssh_standalone_gateway; typeset standalone_gateway_port
   typeset ssh_hybrid_gateway; typeset hybrid_gateway_port
   typeset ssh_hybrid_redis; typeset hybrid_redis_port
-  typeset display_IP; typeset isEC2
+  typeset isEC2
   HSBX_CHART=$(getHelmChart)
   HELM_RELEASE_NAME=$(getHelmRelease)
   HSBX_HAS_EDP=$(getEDPversion)
   if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
     isEC2=True
-    display_IP=$IP
   fi
   echo "$NAMESPACE.Description:       $(getDescription)"
   echo "$NAMESPACE.Chart:             $(getHelmChart)"
