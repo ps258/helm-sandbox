@@ -1414,6 +1414,7 @@ if [[ $# -gt 0 ]]; then
         esac
       done
       setEnvVarAll TYK_LOGLEVEL $HSBX_LOG_LEVEL
+      setEnvVarAll GODEBUG gctrace=1
       if [[ -n $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE ]]; then
         if ! namespaceExists $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE; then
           echo "[FATAL]Control plane namespace '$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE' does not exist"
