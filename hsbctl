@@ -35,6 +35,7 @@ else
   CLUSTER=$HSBCTL_CLUSTER
 fi
 alias kubectl="minikube kubectl -- --cluster=$CLUSTER"
+alias k="minikube kubectl -- --cluster=$CLUSTER"
 alias helm="helm --kube-context $CLUSTER"
 
 NAMESPACE_SELECTOR_LABEL="creator=hsbctl"
@@ -1077,9 +1078,9 @@ function setupMinikube {
       # give it a few seconds to settle down
       sleep 5
       # patch the metrics server to keep 2 hours of metrics with 1m granularity
-      kubectl patch deployment dashboard-metrics-scraper -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard-metrics-scraper","args":["--metric-duration=2h","--metric-resolution=60s"]}]}}}}' -n kubernetes-dashboard
+      minikube -p $CLUSTER kubectl -- patch deployment dashboard-metrics-scraper -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard-metrics-scraper","args":["--metric-duration=2h","--metric-resolution=60s"]}]}}}}' -n kubernetes-dashboard
       # install cert-manager now so that its ready when needed
-      kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.19.1/cert-manager.yaml --wait
+      minikube -p $CLUSTER kubectl -- apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.19.1/cert-manager.yaml --wait
     else
       echo "[WARN]Minikube cluster '$CLUSTER' is already running. Not setting it up again"
     fi
