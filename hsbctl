@@ -73,6 +73,7 @@ HSBX_GATE_PLUGIN_DIR=''
 HSBX_GATE_EE=''
 HSBX_DASH_VERS=''
 HSBX_ENABLE_DEVPORTAL=false
+HSBX_ENABLE_SYNCHRONIZER=false
 HSBX_PUMP_VERS=''
 HSBX_MDCB_VERS=''
 HSBX_DEVPORTAL_VERS=''
@@ -129,6 +130,8 @@ HELM_SET_TYK_MDCB_LICENCE=''
 
 HELM_SET_TYK_GATEWAY_REPLICACOUNT=''
 
+HELM_SET_SYNCHRONIZER=''
+
 #REDIS_BITNAMI_CHART_VERSION="--version 19.0.2"
 #MONGO_BITNAMI_CHART_VERSION="--version 15.1.3"
 #POSTGRES_BITNAMI_CHART_VERSION="--version 12.12.10"
@@ -175,6 +178,7 @@ function help {
   echo "      -r The size of the allocated redis control or data plane storage in Gi (default: ${HSBX_REDIS_DB_SIZE}Gi)"
   echo "      -R The remote control plane sandbox to use for a data plane deployment."
   echo "         Implies -C tyk-data-plane"
+  echo "      -s Enable MDCB synchroniser. Only valid with '-C tyk-control-plane' and '-C tyk-data-plane'"
   echo "      -t Description of the sandbox namespace"
   echo "      -V values.yaml file to use instead of other options. Note this overrides all other Tyk options"
   echo "      -v Version tag. The file $VERSIONFILE contains the versions of each product used"
@@ -768,6 +772,7 @@ function runHelm {
         $HELM_SET_TYK_MDCB_EXTRAENVS \
         $HELM_SET_TYK_MDCB_SERVICE \
         $HELM_SET_TYK_MDCB_LICENCE \
+        $HELM_SET_SYNCHRONIZER \
         --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
         --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
         --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
@@ -791,13 +796,14 @@ function runHelm {
         --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
         --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
         $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
+        $HELM_SET_SYNCHRONIZER \
         $HELM_SET_TYK_GATEWAY_EXTRAENVS \
         $HELM_SET_TYK_PUMP_EXTRAENVS \
         --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
         --set tyk-pump.pump.hybridPump.enableAggregateAnalytics=false \
         --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
     fi
-    # set the things that can't be set with environment variables because it seems impossible to set a value to true
+    # set the things that can't be set with environment variables because it seems impossible to set an environment variable's value to true
     # it seems that the only fix for this is to use valueFrom since envFrom is only supported with operator
     kubectl set env deployment gateway-$HELM_RELEASE_NAME-tyk-gateway \
       TYK_GW_ENABLEHASHEDKEYSLISTING=true \
@@ -1328,7 +1334,7 @@ if [[ $# -gt 0 ]]; then
   case $1 in
     create)
       shift
-      while getopts :C:D:d:E:g:hH:N:PpR:r:t:V:v: arg; do
+      while getopts :C:D:d:E:g:hH:N:PpR:r:st:V:v: arg; do
         case $arg in
           C)
             # this is the chart to deploy. Defaults to tyk-stack
@@ -1386,6 +1392,10 @@ if [[ $# -gt 0 ]]; then
           r)
             # The size of the allocated redis storage in GiB
             HSBX_REDIS_DB_SIZE=$(echo $OPTARG | tr -cd 0-9)
+            ;;
+          s)
+            # enable synchroniser
+            HSBX_ENABLE_SYNCHRONIZER=true
             ;;
           t)
             # the description of the namespace or sandbox
@@ -1503,6 +1513,11 @@ if [[ $# -gt 0 ]]; then
             let HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX+=1
           else
             HELM_TYK_DEVPORTAL_ENABLED=false
+          fi
+          if [[ HSBX_ENABLE_SYNCHRONIZER == 'true' ]]; then
+            if [[ $HSBX_CHART == 'tyk-data-plane' || $HSBX_CHART == 'tyk-control-plane' ]]; then
+              HELM_SET_SYNCHRONIZER='--set global.mdcbSynchronizer.enabled=true'
+            fi
           fi
           # turn on TYK_GW_ENABLEHASHEDKEYSLISTING=true in the gateway because the chart doesn't do that TT-10048
           # I was never able to make this work so I just change the deployment with kubectl once the helm command is complete
