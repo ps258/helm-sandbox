@@ -347,6 +347,30 @@ function nextFreeNamespace {
   done
 }
 
+# Check if a deployment exists with a partial name
+function deploymentExists {
+  typeset deployment
+  deployment=$1
+  if [[ $(kubectl get deployment --no-headers=true -n $NAMESPACE | grep $deployment | wc -l) -gt 0 ]]; then
+    if [[ $(kubectl get deployment --no-headers=true -n $NAMESPACE | grep $deployment | wc -l) -gt 1 ]]; then
+      echo "[FATAL]More than one deployment matches:"
+      kubectl get deployment --no-headers=true -n $NAMESPACE | awk '/'$deployment'/ {print $1}' 1>&2
+      return 1
+    fi
+  else
+    echo "[FATAL]No deployments match '$deployment'"
+    return 1
+  fi
+  return 0
+}
+
+# return a deployment name from partial match
+function getDeploymentName {
+  typeset deployment
+  deployment=$1
+  echo $(kubectl get deployment --no-headers=true -n $NAMESPACE | awk '/'$deployment'/ {print $1}')
+}
+
 function getAllSandboxes {
   kubectl get namespaces --selector=$NAMESPACE_SELECTOR_LABEL --no-headers=true 2>/dev/null | awk '{print $1}' | xargs
 }
@@ -1084,9 +1108,9 @@ function setupMinikube {
       # give it a few seconds to settle down
       sleep 5
       # patch the metrics server to keep 2 hours of metrics with 1m granularity
-      kubectl -- patch deployment dashboard-metrics-scraper -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard-metrics-scraper","args":["--metric-duration=2h","--metric-resolution=60s"]}]}}}}' -n kubernetes-dashboard
+      kubectl patch deployment dashboard-metrics-scraper -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard-metrics-scraper","args":["--metric-duration=2h","--metric-resolution=60s"]}]}}}}' -n kubernetes-dashboard
       # install cert-manager now so that its ready when needed
-      kubectl -- apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.19.1/cert-manager.yaml --wait
+      kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.19.1/cert-manager.yaml --wait
     else
       echo "[WARN]Minikube cluster '$CLUSTER' is already running. Not setting it up again"
     fi
@@ -1627,6 +1651,74 @@ if [[ $# -gt 0 ]]; then
       NAMESPACE=$(getNamespaceNames $1)
       shift
       showLogs $1
+      ;;
+    modify)
+      # modify the number of pods or the version deployed
+      shift
+      if [[ $# -lt 4 ]]; then
+        echo "[FATAL]Not enough arguments to 'modify'"
+        help
+        exit 1
+      fi
+      NAMESPACE=$(getNamespaceNames $1)
+      shift
+      typeset deploymentName
+      if ! deploymentExists $1; then
+        exit 1
+      fi
+      deploymentName=$(getDeploymentName $1)
+      shift
+      typeset newPodCount; typeset newPodVersion
+      newPodCount=''; newPodVersion=''
+      if namespaceExists $NAMESPACE; then
+        while getopts :c:v: arg; do
+          case $arg in
+            c)
+              # change the number of pods deployed
+              newPodCount=$OPTARG
+              ;;
+            v)
+              # change the number of pods deployed
+              newPodVersion=$OPTARG
+              # if it doesn't start with a 'v' add a 'v'
+              if [[ ${newPodVersion:0:1} != 'v' ]]; then
+                newPodVersion="v$newPodVersion"
+              fi
+              ;;
+            :)
+              echo "[FATAL]Option -$OPTARG requires an arguement."
+              exit 1
+              ;;
+            \?)
+              echo "[FATAL]Invalid option: -$OPTARG"
+              exit 1
+              ;;
+          esac
+        done
+        if [[ -n $newPodCount || -n $newPodVersion ]]; then
+          # grab the deployment and update it
+          typeset tmpDeploymentYaml
+          tmpDeploymentYaml=$(mktemp /tmp/deployment.XXXX.yaml)
+          echo "[INFO]kubectl get deploy -n $NAMESPACE $deploymentName -o yaml > $tmpDeploymentYaml"
+          kubectl get deploy -n $NAMESPACE $deploymentName -o yaml > $tmpDeploymentYaml
+          if [[ -n $newPodCount ]]; then
+            yq ".spec.replicas = $newPodCount" -i $tmpDeploymentYaml
+          fi
+          if [[ -n $newPodVersion ]]; then
+            typeset currentVersion
+            currentVersion=$(yq '.spec.template.spec.containers.[0].image' $tmpDeploymentYaml | cut -d: -f2)
+            sed -i "s/$currentVersion/$newPodVersion/" $tmpDeploymentYaml
+          fi
+          echo "[INFO]kubectl apply -f $tmpDeploymentYaml -n $NAMESPACE"
+          kubectl apply -f $tmpDeploymentYaml -n $NAMESPACE
+          echo "[INFO]kubectl rollout status deployment $deploymentName -n $NAMESPACE"
+          kubectl rollout status deployment $deploymentName -n $NAMESPACE
+          rm -f $tmpDeploymentYaml
+        fi
+      else
+        echo "[FATAL]No such ksandbox: $NAMESPACE"
+        exit 1
+      fi
       ;;
     publish)
       shift
