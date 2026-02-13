@@ -1623,19 +1623,77 @@ if [[ $# -gt 0 ]]; then
       shift
       NAMESPACE=$(getNamespaceNames $1)
       HELM_RELEASE_NAME=$(getHelmRelease)
+      HSBX_CHART=$(getHelmChart)
       shift
       case $1 in
         [Cc]hart)
-          getHelmChart
+          echo $HSBX_CHART
           ;;
-        [Dd]escription)
+        [Dd]esc*)
           getDescription
           ;;
-        [Dd]ashboard)
+        [Dd]ash*)
           echo "http://$IP:$(getDashboardPort)/"
           ;;
         [Gg]ateway)
           echo "$(getGatewayProtocol)://$IP:$(getGatewayPort)/"
+          ;;
+        *[kK]ey|[Aa]dmin*)
+          if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
+            echo $(getAdminUserKey)
+          else
+            # FIXME this should find the gateway secret
+            echo "[FATAL]Install is of type $HSBX_CHART: No admin key"
+          fi
+          ;;
+        MDCB*|mdcb*|sink*)
+          if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
+            echo $IP:$(getMDCBPort)
+          else
+            echo "[FATAL]Install is of type $HSBX_CHART: No MDCB" 1>&2
+            exit 1
+          fi
+          ;;
+        # FIXME add individual port and password options like for redis
+        mong*)
+          if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
+            getDatabaseType
+            if [[ $HSBX_DATABASE == 'mongo' ]]; then
+              mongodb_port=$(getMongoPort)
+              echo $(getMongoExternalURL $IP $mongodb_port)
+            else
+              echo "[FATAL]Database is of type $HSBX_DATABASE: Not mongodb" 1>&2
+              exit 1
+            fi
+          else
+            echo "[FATAL]$HSBX_CHART doesn't use mongodb" 1>&2
+            exit 1
+          fi
+          ;;
+        # FIXME add individual port and password options like for redis
+        post*)
+          if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
+            getDatabaseType
+            if [[ $HSBX_DATABASE == 'postgres' ]]; then
+              postgres_port=$(getPostgresPort)
+              postgres_password=$(getPostgressPassword)
+              echo "PGPASSWORD=$postgres_password psql --username=$HSBX_PGUSER --dbname=$HSBX_PGDB --host=$IP --port=$postgres_port"
+            else
+              echo "[FATAL]Database is of type $HSBX_DATABASE: Not mongodb" 1>&2
+              exit 1
+            fi
+          else
+            echo "[FATAL]$HSBX_CHART doesn't use mongodb" 1>&2
+            exit 1
+          fi
+          ;;
+        [Oo]rg*)
+          if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
+            echo $(getOrgID)
+          else
+            echo "[FATAL]Install is of type $HSBX_CHART: No Organisation" 1>&2
+            exit 1
+          fi
           ;;
         [Rr]edis-password)
           echo $(getRedisPassword)
