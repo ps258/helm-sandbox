@@ -50,6 +50,7 @@ HSBX_GATE_ENV_CONFIGMAP="hsandbox-gate-env-vars"
 HSBX_PUMP_ENV_CONFIGMAP="hsandbox-pump-env-vars"
 HSBX_MDCB_ENV_CONFIGMAP="hsandbox-mdcb-env-vars"
 HSBX_DEVPORTAL_ENV_CONFIGMAP="hsandbox-devportal-env-vars"
+POD_MONITOR_FREQ=5s
 
 # secret things and places to store secrets
 HSBX_ADMIN_SECRET=admin_secret
@@ -184,14 +185,23 @@ function help {
   echo "      -v Version tag. The file $VERSIONFILE contains the versions of each product used"
   echo "$name delete <sandbox namespace...>"
   echo "      Delete the sandbox namespace given as a tag and all resources in it"
-  echo "$name get <sandbox namespace...> [chart|release|description|dashboard|gateway|redis|redis-password|redis-port|key|mdcb|mongo|postgres|orgid|values]"
+  echo "$name get <sandbox namespace...> [chart|description|dashboard|gateway|redis|redis-password|redis-port|release|key|mdcb|mongo|postgres|orgid|values]"
   echo "      Print the requested detail in a way that's useful in another script"
-  echo "      Only 'values' is currently implemented"
-  echo "$name logs <sandbox namespace...> <pod part name>"
-  echo "      Tails the logs of the first pod that matches 'pod part name' in the namespace"
   echo "$name init setup minikube ready to run sandboxes"
   echo "$name info <sandbox namespace...>"
   echo "      Print info detailed info on sandbox namespaces"
+  echo "$name logs <sandbox namespace...> <pod part name>"
+  echo "      Tails the logs of the first pod that matches 'pod part name' in the namespace"
+  echo "$name modify <sandbox namespace> <deployment name> [-c count] [-v version]"
+  echo "      Modify deployment named to have a new number of pods and/or pods at the named version"
+  echo "      -c change the deployment to have the new number of pods"
+  echo "      -v rollout the named version into the pods. No checking of the version is done"
+  echo "         so make sure it's right"
+  echo "$name monitor <sandbox namespace> <pod name>"
+  echo "      Print CPU and memory usage for the containers in the pod every $POD_MONITOR_FREQ seconds"
+  echo "      operator: install the latest version of operator ready for contexts in sandbox namespaces"
+  echo "      To install another verions of operator set and export HSBX_OPERATOR_VERSION before invoking the command"
+  echo "$name setup operator"
   echo "$name shell <sandbox namespace...> <pod part name>"
   echo "      Spawns a shell into the pod. Mostly they are now distroless but the bastion can be used"
   echo "$name start start minikube and all namespaces"
@@ -1111,6 +1121,8 @@ function setupMinikube {
       kubectl patch deployment dashboard-metrics-scraper -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard-metrics-scraper","args":["--metric-duration=2h","--metric-resolution=60s"]}]}}}}' -n kubernetes-dashboard
       # install cert-manager now so that its ready when needed
       kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.19.1/cert-manager.yaml --wait
+      # make sure that the Tyk helm repo is available
+      installTykHelmRepo
     else
       echo "[WARN]Minikube cluster '$CLUSTER' is already running. Not setting it up again"
     fi
@@ -1128,6 +1140,43 @@ function setupMinikubeStorage {
     fi
   else
     echo "[WARN]Minikube not installed. Cannot configure"
+  fi
+}
+
+function setupHelmAndOperator {
+  # sleep is needed or the cert manager will refuse connection and the install will fail
+  # if this is run too soon after an init it will fail because things are too busy
+  typeset operatorVersion
+  if [[ -z $HSBX_OPERATOR_VERSION ]]; then
+    operatorVersion=" "
+  else
+    operatorVersion="--version $HSBX_OPERATOR_VERSION"
+  fi
+  if which helm > /dev/null 2>&1; then
+    kubectl create namespace tyk-operator-system
+    kubectl create secret -n tyk-operator-system generic tyk-operator-conf --from-literal "TYK_OPERATOR_LICENSEKEY=$SBX_LICENSE"
+    helm repo add tyk-helm https://helm.tyk.io/public/helm/charts/
+    helm repo update
+    echo "[INFO]Attempting to deploy operator using helm. This may take a while"
+    if ! helm install tyk-operator tyk-helm/tyk-operator -n tyk-operator-system --atomic $operatorVersion; then
+      echo "[WARN]Operator install failed. Retrying, but only once"
+      kubectl delete ns tyk-operator-system --wait
+      kubectl create namespace tyk-operator-system
+      kubectl create secret -n tyk-operator-system generic tyk-operator-conf --from-literal "TYK_OPERATOR_LICENSEKEY=$SBX_LICENSE"
+      sleep 10
+      echo "[INFO]Reattempting to deploy operator using helm. This may take a while"
+      if ! helm install tyk-operator tyk-helm/tyk-operator -n tyk-operator-system $operatorVersion; then
+        echo "[FATAL]Unable to deploy operator after two attempts, giving up"
+        exit 1
+      fi
+    fi
+    # successfully installed, show the version
+    if [[ $(helm list -n tyk-operator-system 2> /dev/null | awk '$1=="tyk-operator" {print $8}') = 'deployed' ]]; then
+      echo "[INFO]Version of the operator chart installed is $(helm list -n tyk-operator-system 2>/dev/null | awk '/tyk-operator/ {print $NF}')"
+    fi
+  else
+    echo "[FATAL]Helm not installed. Please install helm and retry"
+    exit 1
   fi
 }
 
@@ -1576,10 +1625,8 @@ if [[ $# -gt 0 ]]; then
       HELM_RELEASE_NAME=$(getHelmRelease)
       shift
       case $1 in
-        [Vv]alues)
-          helmRelease=$(getHelmRelease)
-          echo [INFO]helm get values $(getHelmRelease) -n $NAMESPACE
-          helm get values $(getHelmRelease) -n $NAMESPACE
+        [Cc]hart)
+          getHelmChart
           ;;
         [Dd]escription)
           getDescription
@@ -1599,11 +1646,13 @@ if [[ $# -gt 0 ]]; then
         [Rr]edis)
           echo "REDISCLI_AUTH=$(getRedisPassword) redis-cli -h $IP -p $(getRedisPort)"
           ;;
-        [Cc]hart)
-          getHelmChart
-          ;;
         [Rr]elease)
           getHelmRelease
+          ;;
+        [Vv]alues)
+          helmRelease=$(getHelmRelease)
+          echo [INFO]helm get values $(getHelmRelease) -n $NAMESPACE
+          helm get values $(getHelmRelease) -n $NAMESPACE
           ;;
         *)
           echo "[FATAL]get $1 not implemented"
@@ -1720,6 +1769,22 @@ if [[ $# -gt 0 ]]; then
         exit 1
       fi
       ;;
+    monitor)
+      shift
+      typeset monitorPodName
+      NAMESPACE=$(getNamespaceNames $1)
+      if [[ $# -lt 2 ]]; then
+        echo "[FATAL]Must provide namespace and podname"
+        exit 1
+      fi
+      monitorPodName=$(getPodNames "$2" | head -1)
+      echo "[INFO]Monitoring $monitorPodName CPU and Memory every $POD_MONITOR_FREQ"
+      echo "[INFO]kubectl top pod $monitorPodName -n $NAMESPACE --containers --no-headers=true"
+      while true; do
+        echo $(date +%F_%T) $(kubectl top pod $monitorPodName -n $NAMESPACE --containers --no-headers=true)
+        sleep $POD_MONITOR_FREQ
+      done
+      ;;
     publish)
       shift
       if [[ $# -lt 1 ]]; then
@@ -1733,6 +1798,26 @@ if [[ $# -gt 0 ]]; then
       else
         echo "[FATAL]No such ksandbox: $NAMESPACE"
       fi
+      ;;
+    setup)
+      shift
+      if [[ $# -lt 1 ]]; then
+        echo "Must provide option: 'operator' or 'istio'"
+        exit 1
+      fi
+      case $1 in
+        operator)
+          # read the environment file to get the operator licence
+          if [[ -f $ENVFILE ]]; then
+            # load env variables
+            . $ENVFILE
+          fi
+          setupHelmAndOperator
+          ;;
+        *)
+          echo "Unsupported option: '$1'. Use 'operator' or 'istio'"
+          ;;
+      esac
       ;;
     shell)
       shift
