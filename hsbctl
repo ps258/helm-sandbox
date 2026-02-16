@@ -447,7 +447,7 @@ function getMinikubeIP {
 
 # checks done to setup env on every run
 function setGlobals {
-  checkCommandInstalled jq yq
+  checkCommandInstalled jq yq envsubst
   if which minikube > /dev/null 2>&1 ; then
     # Get the minikube IP address
     IP=$(getMinikubeIP)
@@ -828,6 +828,7 @@ function runHelm {
         --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
         --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
         --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
+        --set tyk-gateway.gateway.opentelemetry.resourceName=$NAMESPACE \
         $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
         --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
         --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
@@ -847,6 +848,7 @@ function runHelm {
         --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
         --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
         --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
+        --set tyk-gateway.gateway.opentelemetry.resourceName=$NAMESPACE \
         $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
         $HELM_SET_SYNCHRONIZER \
         $HELM_SET_TYK_GATEWAY_EXTRAENVS \
