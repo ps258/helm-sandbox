@@ -156,8 +156,6 @@ else
   ADMIN_PASSWORD=$(echo -n $SBX_PASSWORD | base64 -d)
 fi
 
-IP=$(minikube ip)
-
 function help {
   typeset name
   name=$SCRIPTNAME
@@ -445,6 +443,26 @@ function loadVersions {
 
 function getMinikubeIP {
   minikube profile list -l 2> /dev/null | awk '/'$CLUSTER'/ {print $8}'
+}
+
+# checks done to setup env on every run
+function setGlobals {
+  checkCommandInstalled jq yq
+  if which minikube > /dev/null 2>&1 ; then
+    # Get the minikube IP address
+    IP=$(getMinikubeIP)
+  fi
+}
+
+# verify that a command is in the PATH
+function checkCommandInstalled {
+  typeset cmd
+  for cmd in $*; do
+    if ! which $cmd >/dev/null; then
+      echo "[FATAL]Command '$cmd' not found. Cannot continue"
+      exit 1
+    fi
+  done
 }
 
 function namespaceExists {
@@ -1403,6 +1421,9 @@ function setEnvVarGateway {
 }
 
 # Process commands and take actions
+  # setup global aliases and variables
+  setGlobals
+  startMinikube quiet
 if [[ $# -gt 0 ]]; then
   case $1 in
     create)
