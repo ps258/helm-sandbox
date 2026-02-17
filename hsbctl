@@ -8,12 +8,16 @@ CDPATH=
 #  echo kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.19.1/cert-manager.yaml --wait
 #fi
 
-# define defaults in $HOME/.helm-sandbox
+# define defaults in $HOME/.tyk-sandbox
 # K8S_DEPLOYMENT is the underlying k8s deployment to use
 # default to minikube for now
-K8S_DEPLOYMENT=minikube
-if [[ -f $HOME/.helm-sandbox ]]; then
-  . $HOME/.helm-sandbox
+K8S_DEPLOYMENT=k3s
+# if the standard setup file exists take defaults from that
+if [[ -f ~/.tyk-sandbox ]]; then
+  . ~/.tyk-sandbox
+else
+  SBX_LICENSE=
+  SBX_MDCB_LICENSE=
 fi
 
 # validate the setting of $K8S_DEPLOYMENT. Valid options are "minikube", "k3s" and "none"
@@ -158,14 +162,6 @@ HELM_SET_SYNCHRONIZER=''
 #POSTGRES_BITNAMI_CHART_VERSION="--version 12.12.10"
 ADMIN_EMAIL=''
 ADMIN_PASSWORD=''
-
-# if the standard setup file exists take defaults from that
-if [[ -f ~/.tyk-sandbox ]]; then
-  . ~/.tyk-sandbox
-else
-  SBX_LICENSE=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGxvd2VkX25vZGVzIjoiNjk0NWIwMWMtZWU5NS00YWZmLTQ1ZWEtOTkxMTgzZjZlNWY2LDQwMTlmZWY0LTM5NzktNDJiZi00ZDFmLTAxMTFkMGUxMDUwMCw1Y2E4NjhmNC1iMzAyLTQyMjUtNmY5Zi1kNTIwNjllOGIyMzQsNjI5NWFiZjktYTNmOC00Y2RjLTVmMDQtY2I4MjRiMDhhMDU5LGRlOWYzMjAxLTdkMTUtNDVhYS03NDE1LTEzZmVhYjEzY2U3ZSxmMjdiZGFlMi05MDUwLTRmMGQtNTIxMy0xZWI0YjI3YjAyOGEsOTVjMGY2YzMtYzFjNS00OGJmLTUzNDktMTY3NmNiOWM5Y2U0LGUzMjYxYjRiLWJlODctNDVhZi03NzhiLWViYTViMDQ5YmE3ZCwzNWE2NjYxMi1hYjgwLTQ0MTktNDFhNS01NmZmZmZiMjYxN2EsMmFlYjJkODEtYjE3MC00MTNiLTUzYjEtOTA5NTE0NTRhZTRiIiwiZXhwIjoxNzQ2NjYyMzk5LCJoaWQiOiJwZXRlci5zIiwiaWF0IjoxNzQ0MDIwMjQ3LCJsaWNlbnNlX3R5cGUiOiJpbnRlcm5hbCIsIm93bmVyIjoiNjFjY2U2MmMxMjFjYTEwMDAxOGJiMTkwIiwic2NvcGUiOiJtdWx0aV90ZWFtLHJiYWMsZ3JhcGgsZmVkZXJhdGlvbixzdHJlYW1zLHRyYWNrIiwidiI6IjIifQ.YtjKFa_m13RNDHloUBMcYGB1TG82LIX9XOmSEhYkIQVTPKxvV0h2oZRuYMui9oDyauzEcrc7jzU9bZAvL4acXX74D7oq_f0_rV_rWBR9abQlEO5wZ2RGaLn2qO-XiA-vYQtzXiNfKDFMLrAOmLCHuH8zDkg4Rs4mBJ9d8MQ8EbcD_pFXpgVsP7haEWgLnojEFzeN9HoDTc2JnXV3UmFi67KN8OwcMczmERNzDPzTa12JhC37R029SA6dru2Q0BzGa_P8VoIMFvoLtXCHExrUAAbH_ZvA_6wF-0As4JN4LsQ0u4I5HZ4ELSt0kdgX7GbO7QiMNWmlvvytQwKDRmgQog
-  SBX_MDCB_LICENSE=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJTS1UiOiJUeWstTURDQi1FTlQiLCJleHAiOjE3NjU1ODM5OTksImhpZCI6InBldGVyLnMiLCJsaWNlbnNlX3R5cGUiOiJpbnRlcm5hbCIsIm93bmVyIjoiNjZiNjNiNDZlM2M0ZDUwMDAxNzM5NGIyIn0.gKvhBXt3wM5_zyrqYTX4zxCbdlqUmpjEooy9_SB8Bq5HGfS6hE6jFXVzJNbh3xTrXMEx3EUKJTa0oZI2So1ojEJUARrNy6w9iP03yu1rvoFs3zz_7m2RHWOBiHkL_xI7eXrt0OKXMDTapGixEJoOoEeRzQkz_OZU4CDrNKbgefjNuwq6wWxdV4Yd7P59H25MvnKDuj_XgOIqPcxLKDaF1rODT_1zCyEW4IvGRJd5EIOXjkDMrFb-K-KWyQr9isfNy0VSSsSeYZ1FiXGW-dMu_LOOiDQ1oJqDVsrBBjymf3Pf1kvcUQkvCey2lWJscZgFNRKkIU4mmUzT1MHIQIE_Vw
-fi
 
 # take the ADMIN_EMAIL and ADMIN_PASSWORD from ~/.tyk-sandbox if defined
 if [[ -z $SBX_USER ]]; then
@@ -1150,12 +1146,23 @@ function minikubeProfileExists {
 
 # setup k3s from scratch
 function setupK3s {
-  curl -sfL https://get.k3s.io | sh -
-  mkdir ~/.kube; sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-  sudo chown ubuntu:ubuntu ~/.kube/config
-  export KUBECONFIG="$HOME/.kube/config"
-  echo 'KUBECONFIG=$HOME/.kube/config' >> ~/.bashrc
-  echo "KUBECONFIG=$HOME/.kube/config has been added to ~/.bashrc please logout and in again"
+  if [[ ! -f /usr/local/bin/k3s ]]; then
+    curl -sfL https://get.k3s.io | sh -
+    if [[ ! -d $HOME/.kube ]]; then
+      mkdir ~/.kube
+    fi
+    if [[ ! -f ~/.kube/config ]]; then
+      sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+      sudo chown $(id -u):$(id -g) ~/.kube/config
+    else
+      echo "[INFO]~/.kube/config already exists not modifying it"
+    fi
+    export KUBECONFIG="$HOME/.kube/config"
+    grep -q 'KUBECONFIG=$HOME/.kube/config' ~/.bashrc || echo 'KUBECONFIG=$HOME/.kube/config' >> ~/.bashrc
+    echo "KUBECONFIG=$HOME/.kube/config has been added to ~/.bashrc please logout and in again"
+  else
+    echo "[WARN]k3s is already installed in /usr/local/bin/k3s"
+  fi
 }
 
 # start minikube if it's not already running
