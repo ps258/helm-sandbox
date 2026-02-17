@@ -8,6 +8,23 @@ CDPATH=
 #  echo kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.19.1/cert-manager.yaml --wait
 #fi
 
+# define defaults in $HOME/.helm-sandbox
+# K8S_DEPLOYMENT is the underlying k8s deployment to use
+# default to minikube for now
+K8S_DEPLOYMENT=minikube
+if [[ -f $HOME/.helm-sandbox ]]; then
+  . $HOME/.helm-sandbox
+fi
+
+# validate the setting of $K8S_DEPLOYMENT. Valid options are "minikube", "k3s" and "none"
+case $K8S_DEPLOYMENT in
+  none|minikube|k3s)
+    ;;
+  *)
+    echo '[FATAL]K8S_DEPLOYMENT is unset or invalid. Valid values are "minikube", "k3s" and "none"'
+    exit 1
+esac
+
 # Globals
 SCRIPTNAME=$0
 SCRIPTDIR=$(
@@ -27,16 +44,19 @@ if [[ $# -ge 2 ]]; then
   fi
 fi
 
-if [[ -z $HSBCTL_CLUSTER ]]; then
-  if [[ -z $CLUSTER ]]; then
-    CLUSTER=minikube
+# the multicluster option only works for minikube (and isn't tested any more either)
+if [[ $K8S_DEPLOYMENT == "minikube" ]]; then
+  if [[ -z $HSBCTL_CLUSTER ]]; then
+    if [[ -z $CLUSTER ]]; then
+      CLUSTER=minikube
+    fi
+  else
+    CLUSTER=$HSBCTL_CLUSTER
   fi
-else
-  CLUSTER=$HSBCTL_CLUSTER
+  alias kubectl="minikube kubectl -- --cluster=$CLUSTER"
+  alias k="minikube kubectl -- --cluster=$CLUSTER"
+  alias helm="helm --kube-context $CLUSTER"
 fi
-alias kubectl="minikube kubectl -- --cluster=$CLUSTER"
-alias k="minikube kubectl -- --cluster=$CLUSTER"
-alias helm="helm --kube-context $CLUSTER"
 
 NAMESPACE_SELECTOR_LABEL="creator=hsbctl"
 ISTIO_INJECTION_LABEL='istio-injection=enabled'
@@ -448,9 +468,19 @@ function getMinikubeIP {
 # checks done to setup env on every run
 function setGlobals {
   checkCommandInstalled jq yq envsubst
-  if which minikube > /dev/null 2>&1 ; then
-    # Get the minikube IP address
-    IP=$(getMinikubeIP)
+  if [[ $K8S_DEPLOYMENT == 'minikube' ]]; then
+    if which minikube > /dev/null 2>&1 ; then
+      # Get the minikube IP address
+      IP=$(getMinikubeIP)
+    fi
+  elif [[ $K8S_DEPLOYMENT == 'k3s' ]]; then
+    IP=$(ip route get 1.1.1.1 | grep -oP 'src \K\S+')
+  else
+    # don't know what to do here. The remote cluster will have its own ingres IP
+    # Perhaps IP is set in ~/.helm-sandbox?
+    if [[ -z $IP ]]; then
+      IP=dunno_the_IP
+    fi
   fi
 }
 
@@ -1118,6 +1148,16 @@ function minikubeProfileExists {
   fi
 }
 
+# setup k3s from scratch
+function setupK3s {
+  curl -sfL https://get.k3s.io | sh -
+  mkdir ~/.kube; sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+  sudo chown ubuntu:ubuntu ~/.kube/config
+  export KUBECONFIG="$HOME/.kube/config"
+  echo 'KUBECONFIG=$HOME/.kube/config' >> ~/.bashrc
+  echo "KUBECONFIG=$HOME/.kube/config has been added to ~/.bashrc please logout and in again"
+}
+
 # start minikube if it's not already running
 function setupMinikube {
   typeset mount_command
@@ -1425,7 +1465,9 @@ function setEnvVarGateway {
 # Process commands and take actions
   # setup global aliases and variables
   setGlobals
-  startMinikube quiet
+  if [[ $K8S_DEPLOYMENT == "minikube" ]]; then
+    startMinikube quiet
+  fi
 if [[ $# -gt 0 ]]; then
   case $1 in
     create)
@@ -1769,8 +1811,14 @@ if [[ $# -gt 0 ]]; then
       done
       ;;
     init)
-      setupMinikube
-      setupMinikubeStorage
+      if [[ $K8S_DEPLOYMENT == "minikube" ]]; then
+        setupMinikube
+        setupMinikubeStorage
+      elif [[ $K8S_DEPLOYMENT == "k3s" ]]; then
+        setupK3s
+      else
+        echo "[WARN]Init is only valid for minikube and k3s. K8S_DEPLOYMENT=$K8S_DEPLOYMENT"
+      fi
       ;;
     log*)
       shift
@@ -1916,7 +1964,11 @@ if [[ $# -gt 0 ]]; then
       fi
       ;;
     start)
-      startMinikube
+      if [[ $K8S_DEPLOYMENT == "minikube" ]]; then
+        startMinikube
+      else
+        echo "[INFO]Start is only needed for minikube but K8S_DEPLOYMENT=$K8S_DEPLOYMENT"
+      fi
       ;;
     rm | del*)
       shift
@@ -1931,10 +1983,12 @@ if [[ $# -gt 0 ]]; then
         fi
       done
       tidyReleasedPVCs
-      for NAMESPACE in $(getNamespaceNames $*); do
-        # minikube doesn't always remove the PVs properly. Lets get rid of them properly
-        minikube -p $CLUSTER ssh -- "test -d /var/hostpath-provisioner/$NAMESPACE/ && sudo rm -rf /var/hostpath-provisioner/$NAMESPACE/" 2>/dev/null
-      done
+      if [[ $K8S_DEPLOYMENT == "minikube" ]]; then
+        for NAMESPACE in $(getNamespaceNames $*); do
+          # minikube doesn't always remove the PVs properly. Lets get rid of them properly
+          minikube -p $CLUSTER ssh -- "test -d /var/hostpath-provisioner/$NAMESPACE/ && sudo rm -rf /var/hostpath-provisioner/$NAMESPACE/" 2>/dev/null
+        done
+      fi
       ;;
     version*)
       shift
