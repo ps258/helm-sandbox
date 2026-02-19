@@ -1178,29 +1178,29 @@ function buildBastion {
 
 # setup k3s from scratch
 function setupK3s {
+  # make sure we have somewhere to store plugins
+  if [[ ! -d $HOME/.tyk/plugins ]]; then
+    mkdir -p $HOME/.tyk/plugins
+  fi
   if [[ ! -f /usr/local/bin/k3s ]]; then
+    KUBECONFIG=''
+    export KUBECONFIG
     curl -sfL https://get.k3s.io | sh -
-    sudo chmod 644 /etc/rancher/k3s/k3s.yaml
-    KUBECONFIG=/etc/rancher/k3s/k3s.yaml
     if [[ ! -d $HOME/.kube ]]; then
       mkdir ~/.kube
     fi
-    if [[ -f ~/.kube/config ]]; then
-      KUBECONFIG="$HOME/.kube/config:$KUBECONFIG"
-    else
-      echo "[INFO]~/.kube/config already exists not modifying it"
-    fi
-    export KUBECONFIG
+    sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/k3s-config
+    sudo chown $(id -u):$(id -g) $HOME/.kube/k3s-config
+    KUBECONFIG="$HOME/.kube/k3s-config"
     # install cert-manager now so that its ready when needed
     installCertManager
     # make sure that the Tyk helm repo is available
     installTykHelmRepo
-    if ! grep -q 'export KUBECONFIG' ~/.bashrc; then
-      echo "export KUBECONFIG=$KUBECONFIG" >> ~/.bashrc
-      echo "[INFO]'export KUBECONFIG=$KUBECONFIG' has been added to ~/.bashrc please source it or logout and in again"
-    fi
     # check that the bastion image is available in k3s and build it if not.
     buildBastion
+    # we always need to update KUBECONFIG
+    echo "export KUBECONFIG=$KUBECONFIG" >> ~/.bashrc
+    echo "[INFO]'export KUBECONFIG=$KUBECONFIG' has been added to ~/.bashrc please source it or logout and in again"
   else
     echo "[WARN]k3s is already installed in /usr/local/bin/k3s"
   fi
@@ -1210,6 +1210,8 @@ function setupK3s {
 function setupMinikube {
   typeset mount_command
   mount_command=""
+  KUBECONFIG=$HOME/.kube/minikube-config
+  export KUBECONFIG
   if which minikube > /dev/null 2>&1 ; then
     if ! minikube -p $CLUSTER status > /dev/null 2>&1 ; then
       if [[ ! -d $HOME/.tyk/plugins ]]; then
@@ -1231,6 +1233,9 @@ function setupMinikube {
       installCertManager
       # make sure that the Tyk helm repo is available
       installTykHelmRepo
+      # we always need to update KUBECONFIG
+      echo "export KUBECONFIG=$KUBECONFIG" >> ~/.bashrc
+      echo "[INFO]'export KUBECONFIG=$KUBECONFIG' has been added to ~/.bashrc please source it or logout and in again"
     else
       echo "[WARN]Minikube cluster '$CLUSTER' is already running. Not setting it up again"
     fi
