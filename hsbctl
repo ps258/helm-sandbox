@@ -166,6 +166,12 @@ HELM_SET_TYK_GATEWAY_REPLICACOUNT=''
 
 HELM_SET_SYNCHRONIZER=''
 
+HSBX_REMOTE_CONTROL_PLANE_CONNECTION_STRING=''
+HSBX_REMOTE_CONTROL_PLANE_API_KEY=''
+HSBX_REMOTE_CONTROL_PLANE_RPC_KEY=''
+HSBX_REMOTE_CONTROL_PLANE_NAMESPACE=''
+HSBX_REMOTE_CONTROL_PLANE_USE_SSL=false
+
 #REDIS_BITNAMI_CHART_VERSION="--version 19.0.2"
 #MONGO_BITNAMI_CHART_VERSION="--version 15.1.3"
 #POSTGRES_BITNAMI_CHART_VERSION="--version 12.12.10"
@@ -195,13 +201,25 @@ function help {
   echo "      -E A file to read environment variables from and add them all deployments"
   echo "      -g The number of gateway replicas to run"
   echo "      -h Enable https on gateways"
+  echo "      -K MDCB api key"
+  echo "         Used by data plane only and only when the control plane isn't a sandbox in the cluster"
+  echo "         Incompatible with -R"
+  echo "      -M MDCB connection string."
+  echo "         Used by data plane only and only when the control plane isn't a sandbox in the cluster"
+  echo "         Incompatible with -R"
   echo "      -N Use the given namespace name rather than the next available sandbox"
   echo "         Useful when there's a need to import apis and policy YAML with set namespace"
+  echo "      -O MDCB rpc_key (orgid)"
+  echo "         Used by data plane only and only when the control plane isn't a sandbox in the cluster"
+  echo "         Incompatible with -R"
   echo "      -p Deploy with postgres not mongo"
   echo "      -P Deploy with EDP. (Implies -p)"
-  echo "      -r The size of the allocated redis control or data plane storage in Gi (default: ${HSBX_REDIS_DB_SIZE}Gi)"
   echo "      -R The remote control plane sandbox to use for a data plane deployment."
   echo "         Implies -C tyk-data-plane"
+  echo "      -r The size of the allocated redis control or data plane storage in Gi (default: ${HSBX_REDIS_DB_SIZE}Gi)"
+  echo "      -S Connect to MDCB over SSL"
+  echo "         Used by data plane only and only when the control plane isn't a sandbox in the cluster"
+  echo "         Incompatible with -R"
   echo "      -s Enable MDCB synchroniser. Only valid with '-C tyk-control-plane' and '-C tyk-data-plane'"
   echo "      -t Description of the sandbox namespace"
   echo "      -V values.yaml file to use instead of other options. Note this overrides all other Tyk options"
@@ -604,8 +622,16 @@ function setupAdminAccountSecrets {
 function setupRemoteControlPlaneSecrets {
   typeset orgid
   typeset adminKey
-  orgid=$(getOrgID $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE)
-  adminKey=$(getAdminUserKey $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE)
+  if [[ -n $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE ]] then
+    orgid=$(getOrgID $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE)
+    adminKey=$(getAdminUserKey $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE)
+  elif [[ -n $HSBX_REMOTE_CONTROL_PLANE_RPC_KEY && -n $HSBX_REMOTE_CONTROL_PLANE_API_KEY ]]; then
+    orgid=$HSBX_REMOTE_CONTROL_PLANE_RPC_KEY
+    adminKey=$HSBX_REMOTE_CONTROL_PLANE_API_KEY
+  else
+    echo "[FATAL]Unable to setup remote data plane api_key and rpc_key"
+    exit 1
+  fi
   if ! kubectl get secret -n $NAMESPACE | grep -qw $HSBX_REMOTE_CONTROL_PLANE_SECRETS; then
     kubectl create secret generic $HSBX_REMOTE_CONTROL_PLANE_SECRETS -n $NAMESPACE \
       --from-literal=orgId=$orgid \
@@ -1212,6 +1238,8 @@ function setupK3s {
     echo "export KUBECONFIG=$KUBECONFIG" >> ~/.bashrc
     echo "[INFO]'export KUBECONFIG=$KUBECONFIG' has been added to ~/.bashrc please source it or logout and in again"
   else
+    # check that the bastion image is available in k3s and build it if not.
+    buildBastion
     echo "[WARN]k3s is already installed in /usr/local/bin/k3s"
   fi
 }
@@ -1538,7 +1566,7 @@ if [[ $# -gt 0 ]]; then
   case $1 in
     create)
       shift
-      while getopts :C:D:d:E:g:hH:N:PpR:r:st:V:v: arg; do
+      while getopts :C:D:d:E:g:H:hK:M:N:O:PpR:r:Sst:V:v: arg; do
         case $arg in
           C)
             # this is the chart to deploy. Defaults to tyk-stack
@@ -1575,9 +1603,21 @@ if [[ $# -gt 0 ]]; then
             # use the specified version. Otherwise default to the latest
             HSBX_HELM_VERSION="--version $OPTARG"
             ;;
+          K)
+            # MDCB API key
+            HSBX_REMOTE_CONTROL_PLANE_API_KEY=$OPTARG
+            ;;
+          M)
+            # MDCB connection string (used when not connecting to a control plane created by this script)
+            HSBX_REMOTE_CONTROL_PLANE_CONNECTION_STRING=$OPTARG
+            ;;
           N)
             # specify a particular namespace
             NAMESPACE=$OPTARG
+            ;;
+          O)
+            # MDCB orgid/rpc_key (used when not connecting to a control plane created by this script)
+            HSBX_REMOTE_CONTROL_PLANE_RPC_KEY=$OPTARG
             ;;
           P)
             # deploy devportal so must deploy PG as well then
@@ -1596,6 +1636,10 @@ if [[ $# -gt 0 ]]; then
           r)
             # The size of the allocated redis storage in GiB
             HSBX_REDIS_DB_SIZE=$(echo $OPTARG | tr -cd 0-9)
+            ;;
+          S)
+            # Use SSL to connect to MDCB (used when not connecting to a control plane created by this script)
+            HSBX_REMOTE_CONTROL_PLANE_USE_SSL=true
             ;;
           s)
             # enable synchroniser
@@ -1641,12 +1685,19 @@ if [[ $# -gt 0 ]]; then
         # force the chart to tyk-data-plane so we can install a data plane
         HSBX_CHART=tyk-data-plane
       fi
+      if [[ -n $HSBX_REMOTE_CONTROL_PLANE_CONNECTION_STRING || -n $HSBX_REMOTE_CONTROL_PLANE_RPC_KEY || -n $HSBX_REMOTE_CONTROL_PLANE_API_KEY ]]; then
+        # force the chart to tyk-data-plane so we can install a data plane
+        HSBX_CHART=tyk-data-plane
+        if [[ -z $HSBX_REMOTE_CONTROL_PLANE_CONNECTION_STRING || -z $HSBX_REMOTE_CONTROL_PLANE_RPC_KEY || -z $HSBX_REMOTE_CONTROL_PLANE_API_KEY ]]; then
+          echo "[FATAL]All of -K, -M, -O must be set if any are"
+          exit 1
+        fi
+      fi
       if [[ -z $NAMESPACE ]]; then
         NAMESPACE=hsandbox-$(nextFreeNamespace)
       fi
       if [[ -z $sandboxVersion ]]; then
         echo "[FATAL]Must specify a release version"
-        help
         exit 1
       fi
       if ! namespaceExists $NAMESPACE; then
@@ -1845,7 +1896,6 @@ if [[ $# -gt 0 ]]; then
           ;;
         *)
           echo "[FATAL]get $1 not implemented"
-          help
           exit 1
           ;;
       esac
