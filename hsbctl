@@ -864,6 +864,7 @@ function applyYAMLtemplate {
 
 function runHelm {
   typeset MDCBServiceString
+  typeset MDCBUseSSL
   if [[ -z $HSBX_VALUES_FILE ]]; then
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using release named $HELM_RELEASE_NAME"
     if [[ $HSBX_CHART == 'tyk-control-plane' || $HSBX_CHART == 'tyk-stack' ]]; then
@@ -921,8 +922,10 @@ function runHelm {
       # tyk-data-plane gets its own helm command since it's quite different
       if [[ -n $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE ]]; then
         MDCBServiceString=$(getMDCBServce $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE)
+        MDCBUseSSL=false
       elif [[ -n $HSBX_REMOTE_CONTROL_PLANE_CONNECTION_STRING ]]; then
         MDCBServiceString=$HSBX_REMOTE_CONTROL_PLANE_CONNECTION_STRING
+        MDCBUseSSL=$HSBX_REMOTE_CONTROL_PLANE_USE_SSL
       else
         echo "[FATAL]A data plane must have either -R or -M to set the MDCB connection string"
         exit 1
@@ -930,7 +933,7 @@ function runHelm {
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
         --install \
         --set global.remoteControlPlane.useSecretName=$HSBX_REMOTE_CONTROL_PLANE_SECRETS \
-        --set global.remoteControlPlane.useSSL=false \
+        --set global.remoteControlPlane.useSSL=$MDCBUseSSL \
         --set global.remoteControlPlane.connectionString=$MDCBServiceString \
         --set global.tls.gateway=$HSBX_GATE_USE_HTTPS \
         --set global.secrets.useSecretName=$HSBX_DATA_PLANE_SECRETS \
