@@ -623,9 +623,11 @@ function setupRemoteControlPlaneSecrets {
   typeset orgid
   typeset adminKey
   if [[ -n $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE ]] then
+    # the control plane namespace has been given, fetch the orgid and admin key from that namespace
     orgid=$(getOrgID $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE)
     adminKey=$(getAdminUserKey $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE)
   elif [[ -n $HSBX_REMOTE_CONTROL_PLANE_RPC_KEY && -n $HSBX_REMOTE_CONTROL_PLANE_API_KEY ]]; then
+    # orgid and admin key have been provided on the command line so use them
     orgid=$HSBX_REMOTE_CONTROL_PLANE_RPC_KEY
     adminKey=$HSBX_REMOTE_CONTROL_PLANE_API_KEY
   else
@@ -851,6 +853,7 @@ function applyYAMLtemplate {
 }
 
 function runHelm {
+  typeset MDCBServiceString
   if [[ -z $HSBX_VALUES_FILE ]]; then
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using release named $HELM_RELEASE_NAME"
     if [[ $HSBX_CHART == 'tyk-control-plane' || $HSBX_CHART == 'tyk-stack' ]]; then
@@ -906,11 +909,19 @@ function runHelm {
       # set TYK_GW_ENABLEHASHEDKEYSLISTING directly in the deployment since it can't be set any other way (TT-10048)
     elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
       # tyk-data-plane gets its own helm command since it's quite different
+      if [[ -n $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE ]]; then
+        MDCBServiceString=$(getMDCBServce $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE)
+      elif [[ -n $HSBX_REMOTE_CONTROL_PLANE_CONNECTION_STRING ]]; then
+        MDCBServiceString=$HSBX_REMOTE_CONTROL_PLANE_CONNECTION_STRING
+      else
+        echo "[FATAL]A data plane must have either -R or -M to set the MDCB connection string"
+        exit 1
+      fi
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
         --install \
         --set global.remoteControlPlane.useSecretName=$HSBX_REMOTE_CONTROL_PLANE_SECRETS \
         --set global.remoteControlPlane.useSSL=false \
-        --set global.remoteControlPlane.connectionString=$(getMDCBServce $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE) \
+        --set global.remoteControlPlane.connectionString=$MDCBServiceString \
         --set global.tls.gateway=$HSBX_GATE_USE_HTTPS \
         --set global.secrets.useSecretName=$HSBX_DATA_PLANE_SECRETS \
         --set global.redis.addrs="{tyk-redis-master.$NAMESPACE.svc:6379}" \
@@ -1238,8 +1249,6 @@ function setupK3s {
     echo "export KUBECONFIG=$KUBECONFIG" >> ~/.bashrc
     echo "[INFO]'export KUBECONFIG=$KUBECONFIG' has been added to ~/.bashrc please source it or logout and in again"
   else
-    # check that the bastion image is available in k3s and build it if not.
-    buildBastion
     echo "[WARN]k3s is already installed in /usr/local/bin/k3s"
   fi
 }
@@ -1281,7 +1290,7 @@ function setupMinikube {
     # check that the bastion image is available in minikube and build it if not.
     buildBastion
   else
-    echo "[WARN]Minikube not installed. Cannot start"
+    echo "[WARN]Minikube not installed. Cannot setup the cluster"
   fi
 }
 
@@ -1293,7 +1302,7 @@ function setupMinikubeStorage {
       minikube -p $CLUSTER cp "$SCRIPTDIR/etc/tmp.conf" /etc/tmpfiles.d/ --user root
     fi
   else
-    echo "[WARN]Minikube not installed. Cannot configure"
+    echo "[WARN]Minikube not installed. Cannot configure storage"
   fi
 }
 
