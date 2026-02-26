@@ -826,8 +826,18 @@ function saveOrgAndAdminKey {
 
 # save the control plane name for later retrieval
 function saveControlPlaneName {
-  kubectl get configmap sandbox-details -n $NAMESPACE -o yaml | yq '.data.HSBX_CP = "'$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE'"' | kubectl apply -f -
+  typeset controlPlane
+  if [[ -n $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE ]]; then
+    controlPlane=$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE
+  elif [[ -n $HSBX_REMOTE_CONTROL_PLANE_CONNECTION_STRING ]]; then
+    controlPlane=$HSBX_REMOTE_CONTROL_PLANE_CONNECTION_STRING
+  else
+    echo "[FATAL]A data plane must have either -R or -M to set the MDCB connection string"
+    exit 1
+  fi
+  kubectl get configmap sandbox-details -n $NAMESPACE -o yaml | yq '.data.HSBX_CP = "'$controlPlane'"' | kubectl apply -f -
 }
+
 
 function getPodNames {
   typeset podname
