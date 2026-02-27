@@ -635,10 +635,12 @@ function setupRemoteControlPlaneSecrets {
     exit 1
   fi
   if ! kubectl get secret -n $NAMESPACE | grep -qw $HSBX_REMOTE_CONTROL_PLANE_SECRETS; then
+    # lets make the groupid unique automatically
+    # we'll do this by concatinating the epoch millis with the namespace
     kubectl create secret generic $HSBX_REMOTE_CONTROL_PLANE_SECRETS -n $NAMESPACE \
       --from-literal=orgId=$orgid \
       --from-literal=userApiKey=$adminKey \
-      --from-literal=groupID=$NAMESPACE
+      --from-literal=groupID="$(date +%s%N)$NAMESPACE"
   fi
 }
 
