@@ -869,7 +869,6 @@ function applyYAMLtemplate {
 }
 
 function runHelm {
-  set -x
   typeset MDCBServiceString
   typeset MDCBUseSSL
   if [[ -z $HSBX_VALUES_FILE ]]; then
