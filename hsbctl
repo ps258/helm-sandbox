@@ -149,6 +149,7 @@ HELM_SET_TYK_MDCB_EXTRAENVS=''
 HELM_SET_MONGO_DRIVER=''
 HELM_SET_MONGO_URL_SECRET_NAME=''
 HELM_SET_MONGO_URL_SECRET_KEYNAME=''
+HELM_SET_TYK_PUMP_BACKEND=''
 
 HELM_SET_PG_CONNECTION_SECRET_NAME=''
 HELM_SET_PG_CONNECTION_SECRET_KEYNAME=''
@@ -165,6 +166,8 @@ HELM_SET_TYK_MDCB_LICENCE=''
 HELM_SET_TYK_GATEWAY_REPLICACOUNT=''
 
 HELM_SET_SYNCHRONIZER=''
+
+HELM_GLOBAL_STORAGETYPE=$HSBX_DATABASE
 
 HSBX_REMOTE_CONTROL_PLANE_CONNECTION_STRING=''
 HSBX_REMOTE_CONTROL_PLANE_API_KEY=''
@@ -755,6 +758,7 @@ function deployMongodb {
     HELM_SET_MONGO_DRIVER="--set global.mongo.driver=mongo-go"
     HELM_SET_MONGO_URL_SECRET_NAME="--set global.mongo.connectionURLSecret.name=$MONGODB_SECRETS"
     HELM_SET_MONGO_URL_SECRET_KEYNAME="--set global.mongo.connectionURLSecret.keyName=mongoUrl"
+    HELM_SET_MONGO_URL="--set global.mongo.mongoURL=$(getMongoInternalURL)"
   fi
 }
 
@@ -865,6 +869,7 @@ function applyYAMLtemplate {
 }
 
 function runHelm {
+  set -x
   typeset MDCBServiceString
   typeset MDCBUseSSL
   if [[ -z $HSBX_VALUES_FILE ]]; then
@@ -874,16 +879,23 @@ function runHelm {
       if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
         HELM_SET_TYK_MDCB_SERVICE="--set tyk-mdcb.mdcb.service.type=$HELM_TYK_MDCB_SERVICE_TYPE"
         HELM_SET_TYK_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
+      else
+        HELM_SET_TYK_PUMP_BACKEND="--set tyk-pump.pump.backend[1]=$HELM_GLOBAL_STORAGETYPE"
       fi
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
         --install \
         --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
-        --set .global.mtls.privateCertificateEncodingSecret=$HSBX_GATE_SECRET \
+        --set global.mtls.privateCertificateEncodingSecret=$HSBX_GATE_SECRET \
         --set global.adminUser.email=$ADMIN_EMAIL \
         --set global.secrets.useSecretName=$HSBX_TYK_K8S_SECRETS \
         --set global.components.operator=false \
         --set global.components.devPortal=$HELM_TYK_DEVPORTAL_ENABLED \
         --set global.storageType=$HELM_GLOBAL_STORAGETYPE \
+        $HELM_SET_MONGO_DRIVER \
+        $HELM_SET_MONGO_URL_SECRET_NAME \
+        $HELM_SET_MONGO_URL_SECRET_KEYNAME \
+        $HELM_SET_PG_CONNECTION_SECRET_NAME \
+        $HELM_SET_PG_CONNECTION_SECRET_KEYNAME \
         --set global.redis.addrs="{tyk-redis-master.$NAMESPACE.svc:6379}" \
         --set global.redis.passSecret.name=tyk-redis \
         --set global.redis.passSecret.keyName=redis-password \
@@ -893,11 +905,6 @@ function runHelm {
         --set tyk-dashboard.dashboard.auditLogs.enabled=true \
         --set tyk-dashboard.dashboard.auditLogs.enableDetailedRecording=true \
         --set tyk-dashboard.dashboard.auditLogs.type=db \
-        $HELM_SET_MONGO_DRIVER \
-        $HELM_SET_MONGO_URL_SECRET_NAME \
-        $HELM_SET_MONGO_URL_SECRET_KEYNAME \
-        $HELM_SET_PG_CONNECTION_SECRET_NAME \
-        $HELM_SET_PG_CONNECTION_SECRET_KEYNAME \
         $HELM_SET_TYK_DEVPORTAL_USESECRETNAME \
         $HELM_SET_TYK_DEVPORTAL_SERVICE \
         $HELM_SET_TYK_DEVPORTAL_IMAGE_TAG \
@@ -918,6 +925,7 @@ function runHelm {
         --set tyk-gateway.gateway.opentelemetry.resourceName=$NAMESPACE \
         $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
         --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
+        $HELM_SET_TYK_PUMP_BACKEND \
         --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
       # set TYK_GW_ENABLEHASHEDKEYSLISTING directly in the deployment since it can't be set any other way (TT-10048)
     elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
@@ -1555,9 +1563,11 @@ function setEnvVarAll {
   HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=$value"
   let HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX+=1
   # MDCB last
-  HELM_SET_TYK_MDCB_EXTRAENVS="$HELM_SET_TYK_MDCB_EXTRAENVS --set tyk-mdcb.mdcb.extraEnvs[$HELM_TYK_MDCB_EXTRAENVS_NEXT_INDEX].name=$variable"
-  HELM_SET_TYK_MDCB_EXTRAENVS="$HELM_SET_TYK_MDCB_EXTRAENVS --set tyk-mdcb.mdcb.extraEnvs[$HELM_TYK_MDCB_EXTRAENVS_NEXT_INDEX].value=$value"
-  let HELM_TYK_MDCB_EXTRAENVS_NEXT_INDEX+=1
+  if [[ $HSBX_CHART == "tyk-control-plane" ]]; then
+    HELM_SET_TYK_MDCB_EXTRAENVS="$HELM_SET_TYK_MDCB_EXTRAENVS --set tyk-mdcb.mdcb.extraEnvs[$HELM_TYK_MDCB_EXTRAENVS_NEXT_INDEX].name=$variable"
+    HELM_SET_TYK_MDCB_EXTRAENVS="$HELM_SET_TYK_MDCB_EXTRAENVS --set tyk-mdcb.mdcb.extraEnvs[$HELM_TYK_MDCB_EXTRAENVS_NEXT_INDEX].value=$value"
+    let HELM_TYK_MDCB_EXTRAENVS_NEXT_INDEX+=1
+  fi
 }
 
 function setEnvVarDashboard {
