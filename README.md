@@ -111,5 +111,5 @@ The k3s deployment is less tested but has the advantage that it allows resources
 
 **Note that it may be necessary to source your ~/.bashrc or set KUBECONFIG manually to access kubernetes**
 
-### create
+### `create`
 When creating a helm sandbox the deployed version is specified with `-v`. The versions of other components are read from a file delivered in the helm-sandbox repo called `tyk-versions.list`. The format of that file is documented within it.
