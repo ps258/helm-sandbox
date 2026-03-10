@@ -100,7 +100,7 @@ $ hsbctl shell <hsanbox namespace name> shell
 The `<hsanbox namespace name>` can be the full name like `hsandbox-1` or just the number `1`
 
 ## `hsandbox` commands in detail
-### `init`
+### `hsbctl init`
 Depending on the value of `$K8S_DEPLOYMENT` this will either install and configure minikube or k3s. Minikube is the default.
 
 The minikube deployment is more mature and a number of alterations are made to the deployment to ensure that the metrics server has metrics retained for 2 hours with a 1 minute granularity. It also works out how much memory the minikube deployment should be allowed. Along with a few other things. Have a read of the `setupMinikube` function for more details
@@ -111,5 +111,5 @@ The k3s deployment is less tested but has the advantage that it allows resources
 
 **Note that it may be necessary to source your ~/.bashrc or set KUBECONFIG manually to access kubernetes**
 
-### `create`
+### `hsbctl create`
 When creating a helm sandbox the deployed version is specified with `-v`. The versions of other components are read from a file delivered in the helm-sandbox repo called `tyk-versions.list`. The format of that file is documented within it.
