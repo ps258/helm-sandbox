@@ -99,7 +99,7 @@ $ hsbctl shell <hsanbox namespace name> shell
 ```
 The `<hsanbox namespace name>` can be the full name like `hsandbox-1` or just the number `1`
 
-## `hsandbox` commands in detail
+## `hsbctl` commands in detail
 ### `hsbctl init`
 Depending on the value of `$K8S_DEPLOYMENT` this will either install and configure minikube or k3s. Minikube is the default.
 
