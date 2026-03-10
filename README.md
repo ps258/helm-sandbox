@@ -83,9 +83,11 @@ Here is a list of the environment variables and what they do
 - `SBX_PASSWORD` Base 64 encoded password to set on the `$SBX_USER` account
 - `K8S_DEPLOYMENT` The kubernetes deployment to use. It should be one of "minikube" or "k3s". Minikube is much more tested
 
-### Where the plugins are kept
+### Where the plugin bundles are kept
 A directory will be created in your home directory called `~/.tyk`. In it a subdirectory will be created for each version of Tyk deployed by `hsbctl`
 This will be mounted into a container in the namespace of each deployment which runs a bundle server. The Tyk gateways will be deployed with the correct config to download bundles from that bundle server. The bundle server is called "bastion"
+
+There is no support for delivering plugins without using a bundle
 
 ### The bastion server
 A simple linux container based on the AlmaLinux UBI is provided. This is deployed into each namespace and allows shell access to use tools like curl etc. for diagnostic purposes
