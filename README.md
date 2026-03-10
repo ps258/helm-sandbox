@@ -93,4 +93,8 @@ There is no support for delivering plugins without using a bundle
 A simple linux container based on the AlmaLinux UBI is provided. This is deployed into each namespace and allows shell access to use tools like curl etc. for diagnostic purposes
 It also mounts `~/.tyk/pulgins` and runs a simple python web server so that bundles can be downloaded by gateways. The gateways in each deployment are already configured to use this bundle server
 
-
+Shell access to the bastion can be obtained like this
+```
+$ hsbctl shell <hsanbox namespace name> shell
+```
+The `<hsanbox namespace name>` can be the full name list `hsandbox-1` or just the number `1`
