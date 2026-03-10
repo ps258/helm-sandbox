@@ -4,9 +4,9 @@ Tyk sandbox created with tyk helm charts
 ## Note that this is not a product in any way, it has no support or warranty of any type and the whole repo could be removed at any time
 
 
-## I use this tool to deploy Tyk for testing purposes. The notes documented here are meant as an aid to me and to my fellow team members who might want to use it
+### I use this tool to deploy Tyk for testing purposes. The notes documented here are meant as an aid to me and to my fellow team members who might want to use it
 
-## What the helm sandbox tries to do.
+### What the helm sandbox tries to do.
 
 I wanted a tool that allowed me to deploy Tyk using the Tyk helm charts in a quick and easy way. I also wanted to be able to have multiple deployments at once so I could work on different issues at the same time.
 
@@ -73,7 +73,7 @@ hsbctl version <sandbox namespace...>
       Shows the image version in each deployment in the namespace
 ```
 
-## The config file
+### The config file
 When the file `~/.tyk-sandbox` is present it is sourced by `hsbctl` during startup. This file provides environment variables that affect the behaviour of `hsbctl`
 
 Here is a list of the environment variables and what they do
@@ -83,11 +83,11 @@ Here is a list of the environment variables and what they do
 - `SBX_PASSWORD` Base 64 encoded password to set on the `$SBX_USER` account
 - `K8S_DEPLOYMENT` The kubernetes deployment to use. It should be one of "minikube" or "k3s". Minikube is much more tested
 
-## Where the plugins are kept
+### Where the plugins are kept
 A directory will be created in your home directory called `~/.tyk`. In it a subdirectory will be created for each version of Tyk deployed by `hsbctl`
 This will be mounted into a container in the namespace of each deployment which runs a bundle server. The Tyk gateways will be deployed with the correct config to download bundles from that bundle server. The bundle server is called "bastion"
 
-## The bastion server
+### The bastion server
 A simple linux container based on the AlmaLinux UBI is provided. This is deployed into each namespace and allows shell access to use tools like curl etc. for diagnostic purposes
 It also mounts `~/.tyk/pulgins` and runs a simple python web server so that bundles can be downloaded by gateways. The gateways in each deployment are already configured to use this bundle server
 
