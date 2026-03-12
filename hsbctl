@@ -103,6 +103,8 @@ HSBX_DATABASE=mongo
 HSBX_DESCRIPTION='N/A'
 HSBX_GATE_USE_HTTPS=false
 HSBX_GATE_VERS=''
+# TODO implement using the EE gateway repo via command line option
+HSBX_GATE_REPOSITORY=tykio/tyk-gateway
 HSBX_GATE_PLUGIN_DIR=''
 HSBX_GATE_EE=''
 HSBX_DASH_VERS=''
@@ -918,6 +920,7 @@ function runHelm {
         $HELM_SET_TYK_MDCB_SERVICE \
         $HELM_SET_TYK_MDCB_LICENCE \
         $HELM_SET_SYNCHRONIZER \
+        --set tyk-gateway.gateway.image.repository=$HSBX_GATE_REPOSITORY \
         --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
         --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
         --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
@@ -949,6 +952,7 @@ function runHelm {
         --set global.redis.addrs="{tyk-redis-master.$NAMESPACE.svc:6379}" \
         --set global.redis.passSecret.name=tyk-redis \
         --set global.redis.passSecret.keyName=redis-password \
+        --set tyk-gateway.gateway.image.repository=$HSBX_GATE_REPOSITORY \
         --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
         --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
         --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
