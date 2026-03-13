@@ -807,11 +807,14 @@ function setupDevPortalSecrets {
   fi
 }
 
-# install the tyk repo and update
-function installTykHelmRepo {
+# install the helm repos and update
+function installHelmRepos {
   echo "[INFO]Configuring the necessary helm repos"
   if ! helm repo list | grep -wq tyk-helm; then
     helm repo add tyk-helm https://helm.tyk.io/public/helm/charts/
+  fi
+  if ! helm repo list | grep -wq bitnami then
+    helm repo add bitnami https://charts.bitnami.com/bitnami
   fi
   helm repo update
 }
@@ -1268,7 +1271,7 @@ function setupK3s {
     # install cert-manager now so that its ready when needed
     installCertManager
     # make sure that the Tyk helm repo is available
-    installTykHelmRepo
+    installHelmRepos
     # check that the bastion image is available in k3s and build it if not.
     buildBastion
     # we always need to update KUBECONFIG
@@ -1306,7 +1309,7 @@ function setupMinikube {
       # install cert-manager now so that its ready when needed
       installCertManager
       # make sure that the Tyk helm repo is available
-      installTykHelmRepo
+      installHelmRepos
       # we always need to update KUBECONFIG
       echo "export KUBECONFIG=$KUBECONFIG" >> ~/.bashrc
       echo "[INFO]'export KUBECONFIG=$KUBECONFIG' has been added to ~/.bashrc please source it or logout and in again"
