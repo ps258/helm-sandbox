@@ -813,7 +813,7 @@ function installHelmRepos {
   if ! helm repo list | grep -wq tyk-helm; then
     helm repo add tyk-helm https://helm.tyk.io/public/helm/charts/
   fi
-  if ! helm repo list | grep -wq bitnami then
+  if ! helm repo list | grep -wq bitnami; then
     helm repo add bitnami https://charts.bitnami.com/bitnami
   fi
   helm repo update
