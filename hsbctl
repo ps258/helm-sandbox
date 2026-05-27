@@ -884,9 +884,8 @@ function runHelm {
       if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
         HELM_SET_TYK_MDCB_SERVICE="--set tyk-mdcb.mdcb.service.type=$HELM_TYK_MDCB_SERVICE_TYPE"
         HELM_SET_TYK_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
-      else
-        HELM_SET_TYK_PUMP_BACKEND="--set tyk-pump.pump.backend[1]=$HELM_GLOBAL_STORAGETYPE"
       fi
+      HELM_SET_TYK_PUMP_BACKEND="--set tyk-pump.pump.backend[1]=$HELM_GLOBAL_STORAGETYPE"
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
         --install \
         --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
@@ -894,6 +893,7 @@ function runHelm {
         --set global.adminUser.email=$ADMIN_EMAIL \
         --set global.secrets.useSecretName=$HSBX_TYK_K8S_SECRETS \
         --set global.components.operator=false \
+        --set global.components.pump=true \
         --set global.components.devPortal=$HELM_TYK_DEVPORTAL_ENABLED \
         --set global.storageType=$HELM_GLOBAL_STORAGETYPE \
         $HELM_SET_MONGO_DRIVER \
