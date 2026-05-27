@@ -20,7 +20,7 @@ ENVFILE=$HOME/.tyk-sandbox
 # define defaults in $HOME/.tyk-sandbox
 # K8S_DEPLOYMENT is the underlying k8s deployment to use
 # default to minikube for now
-K8S_DEPLOYMENT=k3s
+K8S_DEPLOYMENT=minikube
 # if the standard setup file exists take defaults from that
 if [[ -f $ENVFILE ]]; then
   . $ENVFILE
@@ -978,6 +978,12 @@ function runHelm {
       TYK_GW_ENABLEBUNDLEDOWNLOADER=true \
       TYK_GW_ACCESSLOGS_ENABLED=true \
       -n $NAMESPACE
+      if [[ $HSBX_ENABLE_DEVPORTAL == 'true' ]]; then
+        kubectl set env deployment portal-$HELM_RELEASE_NAME-tyk-dev-portal \
+          PORTAL_DISABLE_CSRF_CHECK=true \
+          PORTAL_DISABLECSRFCHECK=true \
+          -n $NAMESPACE
+      fi
   else
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
     helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
@@ -1805,8 +1811,8 @@ if [[ $# -gt 0 ]]; then
             HELM_SET_TYK_DEVPORTAL_READY_INITDELAY="--set tyk-dev-portal.readinessProbe.initialDelaySeconds=$DEVPORTAL_INITDELAY"
             HELM_SET_TYK_DEVPORTAL_KIND="--set tyk-dev-portal.kind=Deployment"
             # set PORTAL_DISABLE_CSRF_CHECK=true by default
-            HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].name=PORTAL_DISABLE_CSRF_CHECK"
-            HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=true"
+            #HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].name=PORTAL_DISABLE_CSRF_CHECK"
+            #HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=true"
             # remember to increment HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX so that we keep in sync
             let HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX+=1
           else
