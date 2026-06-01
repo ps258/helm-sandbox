@@ -246,9 +246,9 @@ function help {
   echo "         so make sure it's right"
   echo "$name monitor <sandbox namespace> <pod name>"
   echo "      Print CPU and memory usage for the containers in the pod every $POD_MONITOR_FREQ seconds"
+  echo "$name setup operator"
   echo "      operator: install the latest version of operator ready for contexts in sandbox namespaces"
   echo "      To install another verions of operator set and export HSBX_OPERATOR_VERSION before invoking the command"
-  echo "$name setup operator"
   echo "$name shell <sandbox namespace...> <pod part name>"
   echo "      Spawns a shell into the pod. Mostly they are now distroless but the bastion can be used"
   echo "$name start start minikube and all namespaces"
@@ -2129,7 +2129,7 @@ if [[ $# -gt 0 ]]; then
           setupHelmAndOperator
           ;;
         *)
-          echo "Unsupported option: '$1'. Use 'operator' or 'istio'"
+          echo "Unsupported option: '$1'. Only 'operator' is supported"
           ;;
       esac
       ;;
