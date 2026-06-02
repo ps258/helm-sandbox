@@ -1230,7 +1230,7 @@ function startMinikube {
 }
 
 function minikubeProfileExists {
-  if minikube profile list 2> /dev/null | grep -qw $CLUSTER; then
+  if minikube profile list -o json 2> /dev/null | jq -r '.valid[].Name' | grep -qw $CLUSTER; then
     return 0
   else
     return 1
