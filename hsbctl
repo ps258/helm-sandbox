@@ -86,7 +86,7 @@ HSBX_GATE_ENV_CONFIGMAP="hsandbox-gate-env-vars"
 HSBX_PUMP_ENV_CONFIGMAP="hsandbox-pump-env-vars"
 HSBX_MDCB_ENV_CONFIGMAP="hsandbox-mdcb-env-vars"
 HSBX_DEVPORTAL_ENV_CONFIGMAP="hsandbox-devportal-env-vars"
-POD_MONITOR_FREQ=5s
+POD_MONITOR_FREQ=60s
 
 # secret things and places to store secrets
 HSBX_ADMIN_SECRET=admin_secret
@@ -1400,8 +1400,8 @@ function setupMinikube {
       # give it a few seconds to settle down
       sleep 5
       # patch the metrics server to keep 2 hours of metrics with 1m granularity
-      echo "[INFO]Setting up the metrics server to capture 2h metrics with a 60s resolution"
-      kubectl patch deployment dashboard-metrics-scraper -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard-metrics-scraper","args":["--metric-duration=2h","--metric-resolution=60s"]}]}}}}' -n kubernetes-dashboard
+      echo "[INFO]Setting up the metrics server to capture 2h metrics with a $POD_MONITOR_FREQ resolution"
+      kubectl patch deployment dashboard-metrics-scraper -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard-metrics-scraper","args":["--metric-duration=2h","--metric-resolution='$POD_MONITOR_FREQ'"]}]}}}}' -n kubernetes-dashboard
       # install cert-manager now so that its ready when needed
       installCertManager
       # make sure that the Tyk helm repo is available
