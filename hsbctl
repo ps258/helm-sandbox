@@ -1370,8 +1370,9 @@ function setupK3s {
     installHelmRepos
     # check that the bastion image is available in k3s and build it if not.
     buildBastion
-    # we always need to update KUBECONFIG
     echo "export KUBECONFIG=$KUBECONFIG" >> ~/.bashrc
+    # we always need to update KUBECONFIG
+    echo "unalias kubectl" >> ~/.bashrc
     echo "[INFO]'export KUBECONFIG=$KUBECONFIG' has been added to ~/.bashrc please source it or logout and in again"
   else
     echo "[WARN]k3s is already installed in /usr/local/bin/k3s"
@@ -1406,6 +1407,7 @@ function setupMinikube {
       installCertManager
       # make sure that the Tyk helm repo is available
       installHelmRepos
+      echo 'alias kubectl="minikube kubectl -- "' >> ~/.bashrc
       # we always need to update KUBECONFIG
       echo "export KUBECONFIG=$KUBECONFIG" >> ~/.bashrc
       echo "[INFO]'export KUBECONFIG=$KUBECONFIG' has been added to ~/.bashrc please source it or logout and in again"
