@@ -744,8 +744,10 @@ function deployRedis {
     helm upgrade tyk-redis bitnami/redis -n $NAMESPACE --install $REDIS_BITNAMI_CHART_VERSION \
       --set image.repository=bitnamilegacy/redis \
       --set master.persistence.size=${HSBX_REDIS_DB_SIZE}Gi \
+      --set master.resourcesPreset=none \
       --set replica.persistence.size=${HSBX_REDIS_DB_SIZE}Gi \
       --set replica.replicaCount=$HSBX_REDIS_REPLICAS \
+      --set replica.resourcesPreset=none \
       --set master.service.type=NodePort \
       --set replica.service.type=NodePort > /dev/null
   fi
