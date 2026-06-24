@@ -809,6 +809,7 @@ function deployPostgres {
       --set image.repository=bitnamilegacy/postgresql \
       --set "auth.database=tyk_analytics" \
       --set primary.persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
+      --set primary.resourcesPreset=none \
       --set readReplicas.persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
       --set primary.service.type=NodePort > /dev/null
     # save the helm options for when installing Tyk
@@ -837,6 +838,7 @@ function deployMongodb {
       --set image.repository=bitnamilegacy/mongodb \
       --set persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
       --set backup.cronjob.storage.size=${HSBX_MAIN_DB_SIZE}Gi \
+      --set resourcesPreset=none \
       --set service.type=NodePort > /dev/null
     # save the helm options for when installing Tyk
     HELM_SET_MONGO_DRIVER="--set global.mongo.driver=mongo-go"
