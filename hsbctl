@@ -150,6 +150,7 @@ HELM_SET_TYK_GATEWAY_EXTRAENVS=''
 HELM_SET_TYK_PUMP_EXTRAENVS=''
 HELM_SET_TYK_DEVPORTAL_EXTRAENVS=''
 HELM_SET_TYK_MDCB_EXTRAENVS=''
+HELM_SET_SEGMENT_TAGS=''
 
 HELM_SET_MONGO_DRIVER=''
 HELM_SET_MONGO_URL_SECRET_NAME=''
@@ -231,6 +232,8 @@ function help {
   echo "         Used by data plane only and only when the control plane isn't a sandbox in the cluster"
   echo "         Incompatible with -R"
   echo "      -s Enable MDCB synchroniser. Only valid with '-C tyk-control-plane' and '-C tyk-data-plane'"
+  echo "      -T Enable sharding and set segment tags for a dataplane. Only valid with '-C tyk-data-plane'"
+  echo "         comma saparated list like 'newyork,london'"
   echo "      -t Description of the sandbox namespace"
   echo "      -V values.yaml file to use instead of other options. Note this overrides all other Tyk options"
   echo "      -v Version tag. The file $VERSIONFILE contains the versions of each product used"
@@ -1045,6 +1048,7 @@ function runHelm {
         --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
         --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
         --set tyk-gateway.gateway.opentelemetry.resourceName=$NAMESPACE \
+        $HELM_SET_SEGMENT_TAGS \
         $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
         $HELM_SET_SYNCHRONIZER \
         $HELM_SET_TYK_GATEWAY_EXTRAENVS \
@@ -1708,7 +1712,7 @@ if [[ $# -gt 0 ]]; then
   case $1 in
     create)
       shift
-      while getopts :C:D:d:E:g:H:hK:M:nN:oO:PpR:r:Sst:V:v: arg; do
+      while getopts :C:D:d:E:g:H:hK:M:nN:oO:PpR:r:SsT:t:V:v: arg; do
         case $arg in
           C)
             # this is the chart to deploy. Defaults to tyk-stack
@@ -1800,6 +1804,10 @@ if [[ $# -gt 0 ]]; then
             # enable synchroniser
             HSBX_ENABLE_SYNCHRONIZER=true
             ;;
+          T)
+            # The segment tags to give the gateway. Comma delimited list
+            HELM_SET_SEGMENT_TAGS="--set tyk-gateway.gateway.sharding.enabled=true --set tyk-gateway.gateway.sharding.tags=$(echo $OPTARG | sed 's/,/\\,/g')"
+            ;;
           t)
             # the description of the namespace or sandbox
             HSBX_DESCRIPTION="$OPTARG"
@@ -1847,6 +1855,10 @@ if [[ $# -gt 0 ]]; then
           echo "[FATAL]All of -K, -M, -O must be set if any are"
           exit 1
         fi
+      fi
+      if [[ -n $HELM_SET_SEGMENT_TAGS && $HSBX_CHART != 'tyk-data-plane' ]]; then
+        echo "[FATAL]Can only set segment tags for a tyk-data-plane deployment"
+        exit 1
       fi
       if [[ $INSTALL_OPR_CONTEXT == 'true' && $HSBX_CHART == 'tyk-data-plane' ]]; then
         # For simplicity's sake lets not allow this.
