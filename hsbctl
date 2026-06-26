@@ -1378,6 +1378,11 @@ function setupK3s {
     installHelmRepos
     # check that the bastion image is available in k3s and build it if not.
     buildBastion
+    # patch the metrics server to have POD_MONITOR_FREQ granularity
+    #echo "[INFO]Setting up the metrics server to capture 2h metrics with a $POD_MONITOR_FREQ resolution"
+    #NAMESPACE=kube-system
+    #waitDeploymentReady metrics-server
+    #kubectl get deployment metrics-server -n kube-system -o yaml | yq '.spec.template.spec.containers[0].args[] |= sub("--metric-resolution=\d+s", "--metric-resolution='$POD_MONITOR_FREQ'")' | kubectl apply -f -
     echo "export KUBECONFIG=$KUBECONFIG" >> ~/.bashrc
     # we always need to update KUBECONFIG
     echo "unalias kubectl" >> ~/.bashrc
@@ -1408,7 +1413,7 @@ function setupMinikube {
       minikube -p $CLUSTER addons enable dashboard
       # give it a few seconds to settle down
       sleep 5
-      # patch the metrics server to keep 2 hours of metrics with 1m granularity
+      # patch the metrics server to keep 2 hours of metrics with POD_MONITOR_FREQ granularity
       echo "[INFO]Setting up the metrics server to capture 2h metrics with a $POD_MONITOR_FREQ resolution"
       kubectl patch deployment dashboard-metrics-scraper -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard-metrics-scraper","args":["--metric-duration=2h","--metric-resolution='$POD_MONITOR_FREQ'"]}]}}}}' -n kubernetes-dashboard
       # install cert-manager now so that its ready when needed
