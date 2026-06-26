@@ -1,0 +1,52 @@
+#!/bin/bash
+
+# sets up prometheus and grafana in k8s or gives the URL to access it
+
+PATH=/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin:$PATH
+CDPATH=
+
+if [[ -r ~/.tyk-sandbox ]]; then
+  . ~/.tyk-sandbox
+else
+  echo "[FATAL]Setup ~/.tyk-sandbox first"
+  exit 1
+fi
+
+function namespaceExists {
+  typeset namespace
+  typeset ns
+  namespace=$1
+  for ns in $(kubectl get namespaces --no-headers=true | awk '{print $1}'); do
+    if [[ "$ns" == $namespace ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+function grafanaURL {
+  typeset isEC2
+  typeset grafana_port
+  if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
+    isEC2=True
+  fi
+  if [[ $K8S_DEPLOYMENT == "k3s" ]]; then
+    grafana_port=$(kubectl get svc monitoring-grafana -n monitoring --no-headers | awk '{print $5}' | cut -d: -f2 | cut -d/ -f1)
+    echo grafana is on  http://$(ip route get 1.1.1.1 | grep -oP 'src \K\S+'):$grafana_port
+  elif [[ $K8S_DEPLOYMENT == "minikube" ]]; then
+    grafana_port=$(kubectl get svc monitoring-grafana -n monitoring --no-headers | awk '{print $5}' | cut -d: -f2 | cut -d/ -f1)
+    echo grafana is on  http://$(minikube ip):$grafana_port
+  else
+    echo "[FATAL]Unknown deployment 'K8S_DEPLOYMENT=$K8S_DEPLOYMENT'"
+    exit 1
+  fi
+}
+
+if ! namespaceExists monitoring; then
+  # setup monitoring
+  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+  helm install monitoring prometheus-community/kube-prometheus-stack -n monitoring --create-namespace --set grafana.adminPassword=$(echo -n $SBX_PASSWORD | base64 -d) --set grafana.adminUser=$SBX_USER
+  kubectl get svc monitoring-grafana -n monitoring -o yaml | yq '.spec.type |= sub("ClusterIP","NodePort")' | kubectl apply -f -
+fi
+# report URL to access monitoring
+grafanaURL
