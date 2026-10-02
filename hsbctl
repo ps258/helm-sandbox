@@ -1544,14 +1544,14 @@ function reportSanboxInfo {
   echo "$NAMESPACE.Chart:             $(getHelmChart)"
   if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
     dashboard_port=$(getDashboardPort)
-    ssh_dashboard="-L localhost:$dashboard_port:$IP:$dashboard_port"
+    ssh_dashboard="-L $dashboard_port:$IP:$dashboard_port"
     echo "$NAMESPACE.dashboard:         http://$IP:$dashboard_port/"
     if [[ -n $isEC2 ]]; then
       echo "$NAMESPACE.dashboard:             http://localhost:$dashboard_port/"
     fi
     if [[ $HSBX_HAS_EDP != "null" ]]; then
       edp_port=$(getPortalPort)
-      ssh_edp="-L localhost:$edp_port:$IP:$edp_port"
+      ssh_edp="-L $edp_port:$IP:$edp_port"
       echo "$NAMESPACE.portal:            http://$IP:$edp_port/"
       if [[ -n $isEC2 ]]; then
         echo "$NAMESPACE.portal:            http://localhost:$edp_port/"
@@ -1559,7 +1559,7 @@ function reportSanboxInfo {
     fi
     gateway_port=$(getGatewayPort)
     gateway_protocol=$(getGatewayProtocol)
-    ssh_gateway="-L localhost:$gateway_port:$IP:$gateway_port"
+    ssh_gateway="-L $gateway_port:$IP:$gateway_port"
     echo "$NAMESPACE.gateway:           $gateway_protocol://$IP:$gateway_port/"
     if [[ -n $isEC2 ]]; then
       echo "$NAMESPACE.gateway:               $gateway_protocol://localhost:$gateway_port/"
@@ -1567,7 +1567,7 @@ function reportSanboxInfo {
     if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
       mdcb_port=$(getMDCBPort)
       mdcb_healthport=$(getMDCBHealthPort)
-      ssh_mdcb="-L localhost:$mdcb_port:$IP:$mdcb_port -L localhost:$mdcb_healthport:$IP:$mdcb_healthport"
+      ssh_mdcb="-L $mdcb_port:$IP:$mdcb_port -L $mdcb_healthport:$IP:$mdcb_healthport"
       echo "$NAMESPACE.MDCBport:          $IP:$mdcb_port http://$IP:$mdcb_healthport/health"
       if [[ -n $isEC2 ]]; then
         echo "$NAMESPACE.MDCBport:              localhost:$mdcb_port http://localhost:$mdcb_healthport/health"
@@ -1576,7 +1576,7 @@ function reportSanboxInfo {
     if [[ $HSBX_DATABASE == 'mongo' ]]; then
       checkMongoShellInstalled
       mongodb_port=$(getMongoPort)
-      ssh_mongodb="-L localhost:$mongodb_port:$IP:$mongodb_port"
+      ssh_mongodb="-L $mongodb_port:$IP:$mongodb_port"
       echo "$NAMESPACE.mongo:             $MONGOSHELL --quiet $(getMongoExternalURL $IP $mongodb_port)"
       if [[ -n $isEC2 ]]; then
         echo "$NAMESPACE.mongo:                 $MONGOSHELL --quiet $(getMongoExternalURL localhost $mongodb_port)"
@@ -1584,7 +1584,7 @@ function reportSanboxInfo {
     elif [[ $HSBX_DATABASE == 'postgres' ]]; then
       postgres_port=$(getPostgresPort)
       postgres_password=$(getPostgressPassword)
-      ssh_postgres="-L localhost:$postgres_port:$IP:$postgres_port"
+      ssh_postgres="-L $postgres_port:$IP:$postgres_port"
       echo "$NAMESPACE.postgres:          PGPASSWORD=$postgres_password psql --username=$HSBX_PGUSER --dbname=$HSBX_PGDB --host=$IP --port=$postgres_port"
       if [[ -n $isEC2 ]]; then
         echo "$NAMESPACE.postgres:              PGPASSWORD=$postgres_password psql --username=$HSBX_PGUSER --dbname=$HSBX_PGDB --host=localhost --port=$postgres_port"
@@ -1592,7 +1592,7 @@ function reportSanboxInfo {
     fi
     redis_port=$(getRedisPort)
     redis_password=$(getRedisPassword)
-    ssh_redis="-L localhost:$redis_port:$IP:$redis_port"
+    ssh_redis="-L $redis_port:$IP:$redis_port"
     echo "$NAMESPACE.redis:             REDISCLI_AUTH=$redis_password redis-cli -h $IP -p $redis_port"
     if [[ -n $isEC2 ]]; then
       echo "$NAMESPACE.redis:                 REDISCLI_AUTH=$redis_password redis-cli -h localhost -p $redis_port"
@@ -1601,14 +1601,14 @@ function reportSanboxInfo {
     echo "$NAMESPACE.OrgID:             $(getOrgID)"
   elif [[ $HSBX_CHART == "tyk-gateway" ]]; then
     standalone_gateway_port=$(getGatewayPort)
-    ssh_standalone_gateway="-L localhost:$standalone_gateway_port:$IP:$standalone_gateway_port"
+    ssh_standalone_gateway="-L $standalone_gateway_port:$IP:$standalone_gateway_port"
     gateway_protocol=$(getGatewayProtocol)
     echo "$NAMESPACE.gateway:   $gateway_protocol://$IP:$standalone_gateway_port/"
     if [[ -n $isEC2 ]]; then
       echo "$NAMESPACE.gateway:   $gateway_protocol://localhost:$standalone_gateway_port/"
     fi
     redis_port=$(getRedisPort)
-    ssh_redis="-L localhost:$redis_port:$IP:$redis_port"
+    ssh_redis="-L $redis_port:$IP:$redis_port"
     echo "$NAMESPACE.redis:     redis-cli -h $IP -p $redis_port"
     if [[ -n $isEC2 ]]; then
       echo "$NAMESPACE.redis:     redis-cli -h localhost -p $redis_port"
@@ -1617,14 +1617,14 @@ function reportSanboxInfo {
     echo "$NAMESPACE.ControlPlane:      $(getControlPlaneNamespace)"
     hybrid_gateway_port=$(getGatewayPort)
     gateway_protocol=$(getGatewayProtocol)
-    ssh_hybrid_gateway="-L localhost:$hybrid_gateway_port:$IP:$hybrid_gateway_port"
+    ssh_hybrid_gateway="-L $hybrid_gateway_port:$IP:$hybrid_gateway_port"
     echo "$NAMESPACE.gateway:           $gateway_protocol://$IP:$hybrid_gateway_port/"
     if [[ -n $isEC2 ]]; then
       echo "$NAMESPACE.gateway:               $gateway_protocol://localhost:$hybrid_gateway_port/"
     fi
     hybrid_redis_port=$(getRedisPort)
     redis_password=$(getRedisPassword)
-    ssh_hybrid_redis="-L localhost:$hybrid_redis_port:$IP:$hybrid_redis_port"
+    ssh_hybrid_redis="-L $hybrid_redis_port:$IP:$hybrid_redis_port"
     echo "$NAMESPACE.redis:             REDISCLI_AUTH=$redis_password redis-cli -h $IP -p $hybrid_redis_port"
     if [[ -n $isEC2 ]]; then
       echo "$NAMESPACE.redis:                 REDISCLI_AUTH=$redis_password redis-cli -h localhost -p $hybrid_redis_port"
@@ -1632,7 +1632,7 @@ function reportSanboxInfo {
   fi
   if [[ -n $isEC2 ]]; then
     # report the ssh command to map the service ports back to localhost
-    echo "$NAMESPACE.ssh                $(echo ssh $ssh_dashboard $ssh_edp $ssh_gateway $ssh_mdcb $ssh_mongodb $ssh_postgres $ssh_redis $ssh_standalone_gateway $ssh_hybrid_gateway $ssh_hybrid_redis) <aws hostname>"
+    echo "$NAMESPACE.ssh                $(echo ssh -g $ssh_dashboard $ssh_edp $ssh_gateway $ssh_mdcb $ssh_mongodb $ssh_postgres $ssh_redis $ssh_standalone_gateway $ssh_hybrid_gateway $ssh_hybrid_redis) <aws hostname>"
   fi
   # if the namespace has the label 'istio-injection=enabled' then report the istio-system services
   if kubectl get ns --show-labels --no-headers=true $NAMESPACE | grep -q $ISTIO_INJECTION_LABEL; then
