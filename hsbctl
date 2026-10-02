@@ -1071,7 +1071,7 @@ function runHelm {
     kubectl set env deployment gateway-$HELM_RELEASE_NAME-tyk-gateway \
       TYK_GW_ENABLEHASHEDKEYSLISTING=true \
       TYK_GW_ENABLEBUNDLEDOWNLOADER=true \
-      TYK_GW_ENABLEBUNDLEDOWNLOADER=true \
+      TYK_GW_ENABLEJSVM=true \
       TYK_GW_ACCESSLOGS_ENABLED=true \
       -n $NAMESPACE
       if [[ $HSBX_ENABLE_DEVPORTAL == 'true' ]]; then
