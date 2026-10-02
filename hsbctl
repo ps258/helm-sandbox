@@ -1063,7 +1063,7 @@ function runHelm {
         $HELM_SET_TYK_GATEWAY_EXTRAENVS \
         $HELM_SET_TYK_PUMP_EXTRAENVS \
         --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
-        --set tyk-pump.pump.hybridPump.enableAggregateAnalytics=false \
+        --set tyk-pump.pump.hybridPump.enableAggregateAnalytics=true \
         --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
     fi
     # set the things that can't be set with environment variables because it seems impossible to set an environment variable's value to true
