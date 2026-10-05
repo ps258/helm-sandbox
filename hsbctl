@@ -761,6 +761,11 @@ function deployBastion {
   applyYAMLtemplate bastion.yaml bastion-svc.yaml
 }
 
+function deployHttpbin {
+  echo "[INFO]Creating httbin pod to keep test traffic local"
+  applyYAMLtemplate httpbin-deployment.yaml httpbin-svc-control.yaml
+}
+
 # spawn a shell in a pod
 function runShell {
   typeset podPartName
@@ -1074,12 +1079,12 @@ function runHelm {
       TYK_GW_ENABLEJSVM=true \
       TYK_GW_ACCESSLOGS_ENABLED=true \
       -n $NAMESPACE
-      if [[ $HSBX_ENABLE_DEVPORTAL == 'true' ]]; then
-        kubectl set env deployment portal-$HELM_RELEASE_NAME-tyk-dev-portal \
-          PORTAL_DISABLE_CSRF_CHECK=true \
-          PORTAL_DISABLECSRFCHECK=true \
-          -n $NAMESPACE
-      fi
+    if [[ $HSBX_ENABLE_DEVPORTAL == 'true' ]]; then
+      kubectl set env deployment portal-$HELM_RELEASE_NAME-tyk-dev-portal \
+        PORTAL_DISABLE_CSRF_CHECK=true \
+        PORTAL_DISABLECSRFCHECK=true \
+        -n $NAMESPACE
+    fi
   else
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
     helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
@@ -1916,6 +1921,7 @@ if [[ $# -gt 0 ]]; then
         # setup redis and save the passwords
         deployRedis
         deployBastion
+        deployHttpbin
         if [[ -n $ENV_VAR_FILE ]]; then
           # create a config map to hold the environment variables
           echo "[INFO]Adding environment variables from $ENV_VAR_FILE to configmap $HSBX_GLOBAL_ENV_CONFIGMAP"
