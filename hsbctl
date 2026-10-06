@@ -166,6 +166,7 @@ HELM_SET_TYK_DEVPORTAL_DATABASE_DIALECT=''
 HELM_SET_TYK_DEVPORTAL_LIVE_INITDELAY=''
 HELM_SET_TYK_DEVPORTAL_READY_INITDELAY=''
 HELM_SET_TYK_DEVPORTAL_KIND=''
+HELM_SET_TYK_DEVPORTAL_RUNAS=''
 
 HELM_SET_TYK_MDCB_SERVICE=''
 HELM_SET_TYK_MDCB_LICENCE=''
@@ -997,6 +998,9 @@ function runHelm {
         --set global.redis.passSecret.keyName=redis-password \
         --set global.tls.gateway=$HSBX_GATE_USE_HTTPS \
         --set tyk-dashboard.dashboard.image.tag=$HSBX_DASH_VERS \
+        --set tyk-dashboard.dashboard.securityContext.runAsUser=1000 \
+        --set tyk-dashboard.dashboard.securityContext.fsGroup=2000 \
+        --set tyk-dashboard.dashboard.containerSecurityContext.runAsUser=1000 \
         --set tyk-dashboard.dashboard.service.type=$HELM_TYK_DASHBOARD_SERVICE_TYPE \
         --set tyk-dashboard.dashboard.auditLogs.enabled=true \
         --set tyk-dashboard.dashboard.auditLogs.enableDetailedRecording=true \
@@ -1008,6 +1012,7 @@ function runHelm {
         $HELM_SET_TYK_DEVPORTAL_LIVE_INITDELAY \
         $HELM_SET_TYK_DEVPORTAL_READY_INITDELAY \
         $HELM_SET_TYK_DEVPORTAL_KIND \
+        $HELM_SET_TYK_DEVPORTAL_RUNAS \
         $HELM_SET_TYK_DASHBOARD_EXTRAENVS \
         $HELM_SET_TYK_GATEWAY_EXTRAENVS \
         $HELM_SET_TYK_PUMP_EXTRAENVS \
@@ -1069,6 +1074,9 @@ function runHelm {
         $HELM_SET_TYK_PUMP_EXTRAENVS \
         --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
         --set tyk-pump.pump.hybridPump.enableAggregateAnalytics=true \
+        --set tyk-pump.pump.securityContext.runAsUser=1000 \
+        --set tyk-pump.pump.securityContext.fsGroup=2000 \
+        --set tyk-pump.pump.containerSecurityContext.runAsUser=1000 \
         --set tyk-pump.pump.service.type=$HELM_TYK_PUMP_SERVICE_TYPE  > /dev/null
     fi
     # set the things that can't be set with environment variables because it seems impossible to set an environment variable's value to true
@@ -1954,6 +1962,9 @@ if [[ $# -gt 0 ]]; then
             HELM_SET_TYK_DEVPORTAL_LIVE_INITDELAY="--set tyk-dev-portal.livenessProbe.initialDelaySeconds=$DEVPORTAL_INITDELAY"
             HELM_SET_TYK_DEVPORTAL_READY_INITDELAY="--set tyk-dev-portal.readinessProbe.initialDelaySeconds=$DEVPORTAL_INITDELAY"
             HELM_SET_TYK_DEVPORTAL_KIND="--set tyk-dev-portal.kind=Deployment"
+            HELM_SET_TYK_DEVPORTAL_RUNAS="--set tyk-dev-portal.securityContext.runAsUser=1000"
+            HELM_SET_TYK_DEVPORTAL_RUNAS="$HELM_SET_TYK_DEVPORTAL_RUNAS --set tyk-dev-portal.securityContext.fsGroup=2000"
+            HELM_SET_TYK_DEVPORTAL_RUNAS="$HELM_SET_TYK_DEVPORTAL_RUNAS --set tyk-dev-portal.containerSecurityContext.runAsUser=1000"
             # set PORTAL_DISABLE_CSRF_CHECK=true by default
             #HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].name=PORTAL_DISABLE_CSRF_CHECK"
             #HELM_SET_TYK_DEVPORTAL_EXTRAENVS="$HELM_SET_TYK_DEVPORTAL_EXTRAENVS --set tyk-dev-portal.extraEnvs[$HELM_TYK_DEVPORTAL_EXTRAENVS_NEXT_INDEX].value=true"
