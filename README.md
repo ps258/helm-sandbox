@@ -32,6 +32,8 @@ $ hsbctl
          Incompatible with -R
       -N Use the given namespace name rather than the next available sandbox
          Useful when there's a need to import apis and policy YAML with set namespace
+      -n Don't publish sample APIs
+      -o Create OperatorContext for Tyk Operator
       -O MDCB rpc_key (orgid)
          Used by data plane only and only when the control plane isn't a sandbox in the cluster
          Incompatible with -R
@@ -44,6 +46,8 @@ $ hsbctl
          Used by data plane only and only when the control plane isn't a sandbox in the cluster
          Incompatible with -R
       -s Enable MDCB synchroniser. Only valid with '-C tyk-control-plane' and '-C tyk-data-plane'
+      -T Enable sharding and set segment tags for a dataplane. Only valid with '-C tyk-data-plane'
+         comma saparated list like 'newyork,london'
       -t Description of the sandbox namespace
       -V values.yaml file to use instead of other options. Note this overrides all other Tyk options
       -v Version tag. The file /home/pstubbs/code/helm-sandbox/tyk-versions.list contains the versions of each product used
@@ -62,10 +66,10 @@ hsbctl modify <sandbox namespace> <deployment name> [-c count] [-v version]
       -v rollout the named version into the pods. No checking of the version is done
          so make sure it's right
 hsbctl monitor <sandbox namespace> <pod name>
-      Print CPU and memory usage for the containers in the pod every 5s seconds
+      Print CPU and memory usage for the containers in the pod every 60s seconds
+hsbctl setup operator
       operator: install the latest version of operator ready for contexts in sandbox namespaces
       To install another verions of operator set and export HSBX_OPERATOR_VERSION before invoking the command
-hsbctl setup operator
 hsbctl shell <sandbox namespace...> <pod part name>
       Spawns a shell into the pod. Mostly they are now distroless but the bastion can be used
 hsbctl start start minikube and all namespaces
