@@ -170,6 +170,7 @@ HELM_SET_TYK_DEVPORTAL_RUNAS=''
 
 HELM_SET_TYK_MDCB_SERVICE=''
 HELM_SET_TYK_MDCB_LICENCE=''
+HELM_SET_TYK_MDCB_VERSION=''
 
 HELM_SET_TYK_GATEWAY_REPLICACOUNT=''
 
@@ -815,6 +816,8 @@ function getRedisPassword {
 function deployPostgres {
   if ! helm list -n $NAMESPACE | grep -qw tyk-postgres; then
     echo "[INFO]Deploying Postgres from bitnami/postgresql chart $POSTGRES_BITNAMI_CHART_VERSION"
+    # this turns on loggin of all queries in postgresql pod logs
+    #  --set-string primary.extendedConfiguration="log_statement = 'all'" \
     helm upgrade tyk-postgres bitnami/postgresql -n $NAMESPACE --install $POSTGRES_BITNAMI_CHART_VERSION \
       --set image.repository=bitnamilegacy/postgresql \
       --set "auth.database=tyk_analytics" \
@@ -854,7 +857,6 @@ function deployMongodb {
     HELM_SET_MONGO_DRIVER="--set global.mongo.driver=mongo-go"
     HELM_SET_MONGO_URL_SECRET_NAME="--set global.mongo.connectionURLSecret.name=$MONGODB_SECRETS"
     HELM_SET_MONGO_URL_SECRET_KEYNAME="--set global.mongo.connectionURLSecret.keyName=mongoUrl"
-    #HELM_SET_MONGO_URL="--set global.mongo.mongoURL=$(getMongoInternalURL)"
   fi
 }
 
@@ -976,6 +978,7 @@ function runHelm {
       if [[ $HSBX_CHART == 'tyk-control-plane' ]]; then
         HELM_SET_TYK_MDCB_SERVICE="--set tyk-mdcb.mdcb.service.type=$HELM_TYK_MDCB_SERVICE_TYPE"
         HELM_SET_TYK_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
+        HELM_SET_TYK_MDCB_VERSION="--set tyk-mdcb.mdcb.image.tag=$HSBX_MDCB_VERS"
       fi
       HELM_SET_TYK_PUMP_BACKEND="--set tyk-pump.pump.backend[1]=$HELM_GLOBAL_STORAGETYPE"
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
@@ -1017,6 +1020,7 @@ function runHelm {
         $HELM_SET_TYK_GATEWAY_EXTRAENVS \
         $HELM_SET_TYK_PUMP_EXTRAENVS \
         $HELM_SET_TYK_DEVPORTAL_EXTRAENVS \
+        $HELM_SET_TYK_MDCB_VERSION \
         $HELM_SET_TYK_MDCB_EXTRAENVS \
         $HELM_SET_TYK_MDCB_SERVICE \
         $HELM_SET_TYK_MDCB_LICENCE \
@@ -1975,6 +1979,13 @@ if [[ $# -gt 0 ]]; then
             if [[ $HSBX_CHART == 'tyk-data-plane' || $HSBX_CHART == 'tyk-control-plane' ]]; then
               HELM_SET_SYNCHRONIZER='--set global.mdcbSynchronizer.enabled=true'
             fi
+          fi
+          # setup table sharding
+          if [[ $HSBX_DATABASE == 'postgres' ]]; then
+            setExtraEnvsPump TYK_PMP_PUMPS_SQLAGGREGATE_META_TABLESHARDING true
+            setExtraEnvsPump TYK_PMP_PUMPS_SQL_META_TABLESHARDING true
+          else
+            setExtraEnvsPump TYK_PMP_PUMPS_MONGOAGGREGATE_META_USEMIXEDCOLLECTION false
           fi
         elif [[ $HSBX_CHART == 'tyk-data-plane' ]]; then
             waitStatefulSetReady tyk-redis-master tyk-redis-replicas
