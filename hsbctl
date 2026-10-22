@@ -187,6 +187,8 @@ HSBX_REMOTE_CONTROL_PLANE_USE_SSL=false
 #REDIS_BITNAMI_CHART_VERSION="--version 19.0.2"
 #MONGO_BITNAMI_CHART_VERSION="--version 15.1.3"
 #POSTGRES_BITNAMI_CHART_VERSION="--version 12.12.10"
+HELM_SET_POSTGRES_VERSION="--set image.tag=latest"
+#HELM_SET_POSTGRES_VERSION="--set image.tag=16.6.0-debian-12-r2"
 ADMIN_EMAIL=''
 ADMIN_PASSWORD=''
 
@@ -824,10 +826,12 @@ function deployPostgres {
       --set primary.persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
       --set primary.resourcesPreset=none \
       --set readReplicas.persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
+      $HELM_SET_POSTGRES_VERSION \
       --set primary.service.type=NodePort > /dev/null
     # save the helm options for when installing Tyk
     HELM_SET_PG_CONNECTION_SECRET_NAME="--set global.postgres.connectionStringSecret.name=$POSTGRES_SECRETS"
     HELM_SET_PG_CONNECTION_SECRET_KEYNAME="--set global.postgres.connectionStringSecret.keyName=postgresConnectionString"
+    HELM_SET_TYK_PUMP_BACKEND='--set=tyk-pump.pump.backend={postgres-aggregate,postgres-pump,postgres-graphql,postgres-graphql-aggregate}'
   fi
 }
 
@@ -857,6 +861,7 @@ function deployMongodb {
     HELM_SET_MONGO_DRIVER="--set global.mongo.driver=mongo-go"
     HELM_SET_MONGO_URL_SECRET_NAME="--set global.mongo.connectionURLSecret.name=$MONGODB_SECRETS"
     HELM_SET_MONGO_URL_SECRET_KEYNAME="--set global.mongo.connectionURLSecret.keyName=mongoUrl"
+    HELM_SET_TYK_PUMP_BACKEND='--set=tyk-pump.pump.backend={mongo-aggregate,mongo-selective,mongo-graphql}'
   fi
 }
 
@@ -980,7 +985,8 @@ function runHelm {
         HELM_SET_TYK_MDCB_LICENCE="--set tyk-mdcb.mdcb.useSecretName=$HSBX_TYK_K8S_SECRETS"
         HELM_SET_TYK_MDCB_VERSION="--set tyk-mdcb.mdcb.image.tag=$HSBX_MDCB_VERS"
       fi
-      HELM_SET_TYK_PUMP_BACKEND="--set tyk-pump.pump.backend[1]=$HELM_GLOBAL_STORAGETYPE"
+      #HELM_SET_TYK_PUMP_BACKEND="--set tyk-pump.pump.backend[1]=$HELM_GLOBAL_STORAGETYPE"
+      set -x
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
         --install \
         --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
@@ -1035,7 +1041,7 @@ function runHelm {
         --set tyk-gateway.gateway.containerSecurityContext.runAsUser=1000 \
         $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
         --set tyk-pump.pump.image.tag=$HSBX_PUMP_VERS \
-        $HELM_SET_TYK_PUMP_BACKEND \
+        "${HELM_SET_TYK_PUMP_BACKEND[@]}" \
         --set tyk-pump.pump.securityContext.runAsUser=1000 \
         --set tyk-pump.pump.securityContext.fsGroup=2000 \
         --set tyk-pump.pump.containerSecurityContext.runAsUser=1000 \
