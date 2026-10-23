@@ -2,6 +2,7 @@
 
 PATH=/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin:$PATH
 CDPATH=
+analias rm
 
 # Dependencies
 #  ksh to support arrays. the Mac version of bash doesn't
@@ -290,7 +291,7 @@ function deployOperatorContext {
   typeset adminKey
   typeset orgid
   typeset OperatorContextYAML
-  OperatorContextYAML=$(mktemp /tmp/operatorContext.yaml.XXXX)
+  OperatorContextYAML=$(mktemp /tmp/operatorContext.yaml-XXXXX)
   if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
     # Dashboard (pro) install
     typeset dashURL
@@ -313,8 +314,8 @@ function deployOperatorContext {
     kubectl apply -f $OperatorContextYAML -n $NAMESPACE
     rm -f $OperatorContextYAML
   else
-    # stand alone (CE) deployment
-    echo "[FATAL]Deploy an operator context into type $HSBX_CHART"
+    # Hybrid or stand alone (CE) deployment
+    echo "[FATAL]Cannot deploy an operator context into type $HSBX_CHART"
     rm -f $OperatorContextYAML
     exit 1
   fi
@@ -368,7 +369,7 @@ function OperatorContextExists {
 function deployCRDAPIs {
   typeset APIsourceYaml
   typeset tmpAPIyaml
-  tmpAPIyaml=$(mktemp /tmp/API.yaml.XXXX)
+  tmpAPIyaml=$(mktemp /tmp/API.yaml-XXXXX)
   for APIsourceYaml in $*; do
     if [[ -f $APIsourceYaml ]]; then
       cp $APIsourceYaml $tmpAPIyaml
@@ -411,10 +412,10 @@ function publishAPIs {
             curl -s -X POST -H "Content-Type: application/json" -H "Authorization: $adminKey" http://$IP:$DashboardPort/api/apis -d @"$APIfile"
           else
             # deal with the files that are exported APIs from the dashboard
-            APIfileName=$(mktemp "/tmp/$(basename '$APIfile').XXXXXX")
+            APIfileName=$(mktemp "/tmp/$(basename '$APIfile')-XXXXX")
             createApiDefinition "$APIfile" > $APIfileName
             curl -s -X POST -H "Content-Type: application/json" -H "Authorization: $adminKey" http://$IP:$DashboardPort/api/apis -d @"$APIfileName"
-            \rm $APIfileName
+            rm $APIfileName
           fi
         else
           # We're probably dealing with a YAML file since the first character in the file is NOT a '{'
@@ -636,7 +637,7 @@ function namespaceExists {
 # these labels are used internally and are also helpful for remembering why you created the sandbox
 function createNamespace {
   typeset configYAML
-  configYAML=$(mktemp /tmp/configYAML.yaml.XXXX)
+  configYAML=$(mktemp /tmp/configYAML.yaml-XXXXX)
   if ! namespaceExists $NAMESPACE; then
     echo "[INFO]kubectl create ns $NAMESPACE"
     kubectl create ns $NAMESPACE
@@ -964,7 +965,7 @@ function applyYAMLtemplate {
   typeset tmpYamlFile
   for YAMLfile in $*; do
     YAMLfile=$(basename $YAMLfile)
-    tmpYamlFile=$(mktemp /tmp/XXXXX-$YAMLfile)
+    tmpYamlFile=$(mktemp /tmp/${YAMLfile}-XXXXX)
     if [[ -f $YAMLDIR/$YAMLfile ]]; then
       cat $YAMLDIR/$YAMLfile | envsubst > $tmpYamlFile
       kubectl apply -n $NAMESPACE -f $tmpYamlFile
@@ -1225,7 +1226,7 @@ function checkChartName {
     echo "[FATAL]No chart name provided"
     exit 1
   elif [[ $chartname != 'tyk-stack' && $chartname != 'tyk-control-plane' && $chartname != 'tyk-data-plane' ]]; then
-    echo "[FATAL]Chart '$chartname' unsupported"
+    echo "[FATAL]Chart '$chartname' unsupported by this script"
     exit 1
   fi
 }
@@ -2218,7 +2219,7 @@ if [[ $# -gt 0 ]]; then
         if [[ -n $newPodCount || -n $newPodVersion ]]; then
           # grab the deployment and update it
           typeset tmpDeploymentYaml
-          tmpDeploymentYaml=$(mktemp /tmp/deployment.XXXX.yaml)
+          tmpDeploymentYaml=$(mktemp /tmp/deployment.yaml-XXXXX)
           echo "[INFO]kubectl get deploy -n $NAMESPACE $deploymentName -o yaml > $tmpDeploymentYaml"
           kubectl get deploy -n $NAMESPACE $deploymentName -o yaml > $tmpDeploymentYaml
           if [[ -n $newPodCount ]]; then
