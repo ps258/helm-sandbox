@@ -2,7 +2,7 @@
 
 PATH=/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin:$PATH
 CDPATH=
-analias rm
+unalias rm
 
 # Dependencies
 #  ksh to support arrays. the Mac version of bash doesn't
