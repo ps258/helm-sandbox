@@ -129,7 +129,9 @@ HSBX_PORTAL_THEMES_SIZE=2 # the size to make EDP's /opt/portal/themes volume for
 HSBX_CHART=tyk-stack
 HSBX_GATE_BUNDLEBASEDIR=''
 HSBX_HELM_VERSION=""
-REDIS_PASSWORD=''
+REDIS_PASSWORD=rdspassword
+MONGO_PASSWORD=mgopassword
+POSTGRES_PASSWORD=pgpassword
 DEVPORTAL_INITDELAY=10
 
 # set the services to NodePort
@@ -759,6 +761,7 @@ function deployRedis {
     helm upgrade tyk-redis bitnami/redis -n $NAMESPACE  \
       $HELM_SERVERSIDE_APPLY \
       --install $REDIS_BITNAMI_CHART_VERSION \
+      --set auth.password=$REDIS_PASSWORD \
       --set image.repository=bitnamilegacy/redis \
       --set master.persistence.size=${HSBX_REDIS_DB_SIZE}Gi \
       --set master.resourcesPreset=none \
@@ -818,7 +821,7 @@ function runShell {
   done
 }
 
-# fetch the redis password from the tyk-redis secret, decode it and save it into REDIS_PASSWORD
+# fetch the redis password from the tyk-redis secret, decode it and return it
 function getRedisPassword {
   kubectl get secret --namespace $NAMESPACE tyk-redis -o jsonpath="{.data.redis-password}" | base64 -d
 }
@@ -832,6 +835,7 @@ function deployPostgres {
     helm upgrade tyk-postgres bitnami/postgresql -n $NAMESPACE \
       $HELM_SERVERSIDE_APPLY \
       --install $POSTGRES_BITNAMI_CHART_VERSION \
+      --set auth.postgresPassword=$POSTGRES_PASSWORD \
       --set image.repository=bitnamilegacy/postgresql \
       --set "auth.database=tyk_analytics" \
       --set primary.persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
@@ -865,6 +869,8 @@ function deployMongodb {
     helm upgrade tyk-mongo bitnami/mongodb -n $NAMESPACE \
       $HELM_SERVERSIDE_APPLY \
       --install $MONGO_BITNAMI_CHART_VERSION \
+      --set auth.rootUser=root \
+      --set auth.rootPassword=$MONGO_PASSWORD \
       --set image.repository=bitnamilegacy/mongodb \
       --set persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
       --set backup.cronjob.storage.size=${HSBX_MAIN_DB_SIZE}Gi \
