@@ -80,6 +80,7 @@ ISTIO_INJECTION_LABEL='istio-injection=enabled'
 HELM_TYKSTACK_RELEASE_NAME=tykstack
 HELM_TYKCONTROLPLANE_RELEASE_NAME=tykcontrolplane
 HELM_DATAPLANE_RELEASE_NAME=tykdataplane
+HELM_SERVERSIDE_APPLY=""
 HSBX_LOG_LEVEL=debug
 HSBX_GLOBAL_ENV_CONFIGMAP="hsandbox-global-env-vars"
 HSBX_DASH_ENV_CONFIGMAP="hsandbox-dashboard-env-vars"
@@ -584,7 +585,12 @@ function getMinikubeIP {
 
 # checks done to setup env on every run
 function setGlobals {
-  checkCommandInstalled jq yq envsubst
+  checkCommandInstalled jq yq envsubst helm
+  HELM_VERSION=$(helm version --template='{{.Version}}' | sed 's/^v//')
+  HELM_MAJOR=${HELM_VERSION%%.*}
+  if [ "$HELM_MAJOR" -gt 3 ]; then
+    HELM_SERVERSIDE_APPLY="--server-side=false"
+  fi
   export HSBX_PLUGIN_PATH
   if [[ $K8S_DEPLOYMENT == 'minikube' ]]; then
     if which minikube > /dev/null 2>&1 ; then
@@ -750,7 +756,9 @@ function setupDataPlaneSecret {
 function deployRedis {
   if ! helm list -n $NAMESPACE | grep -qw tyk-redis; then
     echo "[INFO]Deploying Redis from bitnami/redis chart $REDIS_BITNAMI_CHART_VERSION"
-    helm upgrade tyk-redis bitnami/redis -n $NAMESPACE --install $REDIS_BITNAMI_CHART_VERSION \
+    helm upgrade tyk-redis bitnami/redis -n $NAMESPACE  \
+      $HELM_SERVERSIDE_APPLY \
+      --install $REDIS_BITNAMI_CHART_VERSION \
       --set image.repository=bitnamilegacy/redis \
       --set master.persistence.size=${HSBX_REDIS_DB_SIZE}Gi \
       --set master.resourcesPreset=none \
@@ -821,7 +829,9 @@ function deployPostgres {
     echo "[INFO]Deploying Postgres from bitnami/postgresql chart $POSTGRES_BITNAMI_CHART_VERSION"
     # this turns on loggin of all queries in postgresql pod logs
     #  --set-string primary.extendedConfiguration="log_statement = 'all'" \
-    helm upgrade tyk-postgres bitnami/postgresql -n $NAMESPACE --install $POSTGRES_BITNAMI_CHART_VERSION \
+    helm upgrade tyk-postgres bitnami/postgresql -n $NAMESPACE \
+      $HELM_SERVERSIDE_APPLY \
+      --install $POSTGRES_BITNAMI_CHART_VERSION \
       --set image.repository=bitnamilegacy/postgresql \
       --set "auth.database=tyk_analytics" \
       --set primary.persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
@@ -852,7 +862,9 @@ function getPostgressPassword {
 function deployMongodb {
   if ! helm list -n $NAMESPACE | grep -qw tyk-mongo; then
     echo "[INFO]Deploying Mongodb from bitnami/mongdb chart $MONGO_BITNAMI_CHART_VERSION"
-    helm upgrade tyk-mongo bitnami/mongodb -n $NAMESPACE --install $MONGO_BITNAMI_CHART_VERSION \
+    helm upgrade tyk-mongo bitnami/mongodb -n $NAMESPACE \
+      $HELM_SERVERSIDE_APPLY \
+      --install $MONGO_BITNAMI_CHART_VERSION \
       --set image.repository=bitnamilegacy/mongodb \
       --set persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
       --set backup.cronjob.storage.size=${HSBX_MAIN_DB_SIZE}Gi \
@@ -987,6 +999,7 @@ function runHelm {
         HELM_SET_TYK_MDCB_VERSION="--set tyk-mdcb.mdcb.image.tag=$HSBX_MDCB_VERS"
       fi
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
+        $HELM_SERVERSIDE_APPLY \
         --install \
         --set global.adminUser.useSecretName=$HSBX_ADMIN_ACCOUNT_SECRETS \
         --set global.mtls.privateCertificateEncodingSecret=$HSBX_GATE_SECRET \
@@ -1058,6 +1071,7 @@ function runHelm {
         exit 1
       fi
       helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE $HSBX_HELM_VERSION \
+        $HELM_SERVERSIDE_APPLY \
         --install \
         --set global.remoteControlPlane.useSecretName=$HSBX_REMOTE_CONTROL_PLANE_SECRETS \
         --set global.remoteControlPlane.useSSL=$MDCBUseSSL \
@@ -1091,6 +1105,7 @@ function runHelm {
   else
     echo "[INFO]Deploying Tyk from chart tyk-helm/$HSBX_CHART onto namespace $NAMESPACE using values from $HSBX_VALUES_FILE"
     helm upgrade $HELM_RELEASE_NAME tyk-helm/$HSBX_CHART -n $NAMESPACE \
+      $HELM_SERVERSIDE_APPLY \
       --install \
       -f $HSBX_VALUES_FILE
   fi
