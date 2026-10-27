@@ -108,8 +108,23 @@ HSBX_DATABASE=mongo
 HSBX_DESCRIPTION='N/A'
 HSBX_GATE_USE_HTTPS=false
 HSBX_GATE_VERS=''
-# TODO implement using the EE gateway repo via command line option
-HSBX_GATE_REPOSITORY=tykio/tyk-gateway
+# This is reset in the create) section if EE is needed
+# By default the charts use tyk-gateway-ee, so this sets it back to the non-ee version
+# because I would rather my test envs be non-ee by default
+HSBX_GATEWAY_REPOSITORY=tykio/tyk-gateway
+HSBX_GATEWAY_EE_REPOSITORY=tykio/tyk-gateway-ee
+HELM_SET_GATEWAY_REPOSITORY="--set tyk-gateway.gateway.image.repository=$HSBX_GATEWAY_REPOSITORY"
+HSBX_EE_GATEWAY=false
+# Set all of the FIPS repositories
+HSBX_FIPS=false
+HSBX_GATEWAY_FIPS_REPOSITORY=tykio/tyk-gateway-fips
+HSBX_DASHBOARD_FIPS_REPOSITORY=tykio/tyk-dashboard-fips
+HSBX_PUMP_FIPS_REPOSITORY=tykio/tyk-pump-fips
+HSBX_MDCB_FIPS_REPOSITORY=tykio/tyk-mdcb-docker-fips
+HSBX_PORTAL_FIPS_REPOSITORY=tykio/tyk-portal-fips
+HSBX_BOOTSTRAP_PREINSTALL_FIPS_REPOSITORY=tykio/tyk-k8s-bootstrap-pre-install-fips
+HSBX_BOOTSTRAP_POSTINSTALL_FIPS_REPOSITORY=tykio/tyk-k8s-bootstrap-post-fips
+HSBX_BOOTSTRAP_PREDELETE_FIPS_REPOSITORY=tykio/tyk-k8s-bootstrap-pre-delete-fips
 HSBX_GATE_PLUGIN_DIR=''
 HSBX_GATE_EE=''
 HSBX_DASH_VERS=''
@@ -217,6 +232,8 @@ function help {
   echo "         tyk-data-plane"
   echo "      -D The size of the allocated Mongo or PG storage in Gi (default: ${HSBX_MAIN_DB_SIZE}Gi)"
   echo "      -E A file to read environment variables from and add them all deployments"
+  echo "      -e Install the Enterprise Edition (ee)"
+  echo "      -f Install the FIPS edition"
   echo "      -g The number of gateway replicas to run"
   echo "      -h Enable https on gateways"
   echo "      -K MDCB api key"
@@ -228,12 +245,12 @@ function help {
   echo "      -N Use the given namespace name rather than the next available sandbox"
   echo "         Useful when there's a need to import apis and policy YAML with set namespace"
   echo "      -n Don't publish sample APIs"
-  echo "      -o Create OperatorContext for Tyk Operator"
   echo "      -O MDCB rpc_key (orgid)"
   echo "         Used by data plane only and only when the control plane isn't a sandbox in the cluster"
   echo "         Incompatible with -R"
-  echo "      -p Deploy with postgres not mongo"
+  echo "      -o Create OperatorContext for Tyk Operator"
   echo "      -P Deploy with EDP. (Implies -p)"
+  echo "      -p Deploy with postgres not mongo"
   echo "      -R The remote control plane sandbox to use for a data plane deployment."
   echo "         Implies -C tyk-data-plane"
   echo "      -r The size of the allocated redis control or data plane storage in Gi (default: ${HSBX_REDIS_DB_SIZE}Gi)"
@@ -1049,11 +1066,12 @@ function runHelm {
         $HELM_SET_TYK_MDCB_SERVICE \
         $HELM_SET_TYK_MDCB_LICENCE \
         $HELM_SET_SYNCHRONIZER \
-        --set tyk-gateway.gateway.image.repository=$HSBX_GATE_REPOSITORY \
+        $HELM_SET_GATEWAY_REPOSITORY \
+        $HELM_SET_FIPS_REPOSITORIES \
         --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
+        --set tyk-gateway.gateway.accessLogs.enabled=true \
         --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
         --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
-        --set tyk-gateway.gateway.image.repository=$HSBX_GATE_REPOSITORY \
         --set tyk-gateway.gateway.securityContext.runAsUser=1000 \
         --set tyk-gateway.gateway.securityContext.fsGroup=2000 \
         --set tyk-gateway.gateway.containerSecurityContext.runAsUser=1000 \
@@ -1087,14 +1105,15 @@ function runHelm {
         --set global.redis.addrs="{tyk-redis-master.$NAMESPACE.svc:6379}" \
         --set global.redis.passSecret.name=tyk-redis \
         --set global.redis.passSecret.keyName=redis-password \
-        --set tyk-gateway.gateway.image.repository=$HSBX_GATE_REPOSITORY \
+        $HELM_SET_GATEWAY_REPOSITORY \
+        $HELM_SET_FIPS_REPOSITORIES \
         --set tyk-gateway.gateway.image.tag=$HSBX_GATE_VERS \
         --set tyk-gateway.gateway.service.type=$HELM_TYK_GATEWAY_SERVICE_TYPE \
         --set tyk-gateway.gateway.control.type=$HELM_TYK_GATEWAY_CONTROL_TYPE \
         --set tyk-gateway.gateway.opentelemetry.resourceName=$NAMESPACE \
         --set tyk-gateway.gateway.securityContext.runAsUser=1000 \
         --set tyk-gateway.gateway.securityContext.fsGroup=2000 \
-        --set tyk-gateway.gateway.accessLogs = true \
+        --set tyk-gateway.gateway.accessLogs.enabled=true \
         --set tyk-gateway.gateway.containerSecurityContext.runAsUser=1000 \
         $HELM_SET_SEGMENT_TAGS \
         $HELM_SET_TYK_GATEWAY_REPLICACOUNT \
@@ -1770,7 +1789,7 @@ if [[ $# -gt 0 ]]; then
   case $1 in
     create)
       shift
-      while getopts :C:D:d:E:g:H:hK:M:nN:oO:PpR:r:SsT:t:V:v: arg; do
+      while getopts :C:D:d:eE:fg:H:hK:M:nN:oO:PpR:r:SsT:t:V:v: arg; do
         case $arg in
           C)
             # this is the chart to deploy. Defaults to tyk-stack
@@ -1785,6 +1804,29 @@ if [[ $# -gt 0 ]]; then
             # Debug level to apply to all containers
             HSBX_LOG_LEVEL="$OPTARG"
             checkDebugLevel "$HSBX_LOG_LEVEL"
+            ;;
+          e)
+            HSBX_EE_GATEWAY=true
+            HELM_SET_GATEWAY_REPOSITORY="--set tyk-gateway.gateway.image.repository=$HSBX_GATEWAY_EE_REPOSITORY"
+            ;;
+          f)
+            HSBX_FIPS=true
+            # setup the FIPS repos
+            HELM_SET_FIPS_REPOSITORIES="--set tyk-gateway.gateway.image.repository=$HSBX_GATEWAY_FIPS_REPOSITORY"
+            HELM_SET_FIPS_REPOSITORIES="$HELM_SET_FIPS_REPOSITORIES --set tyk-dashboard.dashboard.image.repository=$HSBX_DASHBOARD_FIPS_REPOSITORY"
+            HELM_SET_FIPS_REPOSITORIES="$HELM_SET_FIPS_REPOSITORIES --set tyk-pump.pump.image.repository=$HSBX_PUMP_FIPS_REPOSITORY"
+            HELM_SET_FIPS_REPOSITORIES="$HELM_SET_FIPS_REPOSITORIES --set tyk-mdcb.mdcb.image.repository=$HSBX_MDCB_FIPS_REPOSITORY"
+            HELM_SET_FIPS_REPOSITORIES="$HELM_SET_FIPS_REPOSITORIES --set tyk-dev-portal.image.repository=$HSBX_PORTAL_FIPS_REPOSITORY"
+            HELM_SET_FIPS_REPOSITORIES="$HELM_SET_FIPS_REPOSITORIES --set tyk-bootstrap.bootstrap.jobs.preInstall.image.repository=$HSBX_BOOTSTRAP_PREINSTALL_FIPS_REPOSITORY"
+            HELM_SET_FIPS_REPOSITORIES="$HELM_SET_FIPS_REPOSITORIES --set tyk-bootstrap.bootstrap.jobs.postInstall.image.repository=$HSBX_BOOTSTRAP_POSTINSTALL_FIPS_REPOSITORY"
+            HELM_SET_FIPS_REPOSITORIES="$HELM_SET_FIPS_REPOSITORIES --set tyk-bootstrap.bootstrap.jobs.preDelete.image.repository=$HSBX_BOOTSTRAP_PREDELETE_FIPS_REPOSITORY"
+            # as of Oct 2026, the charts have the following tags set to v2.2.0 which doesn't exist in the fips repos.
+            # So I'm setting them to v2.2 instead. I'd expect v2.2.0 to be the same as v2.2 anyway
+            HELM_SET_FIPS_REPOSITORIES="$HELM_SET_FIPS_REPOSITORIES --set tyk-bootstrap.bootstrap.jobs.postInstall.image.tag=v2.2"
+            HELM_SET_FIPS_REPOSITORIES="$HELM_SET_FIPS_REPOSITORIES --set tyk-bootstrap.bootstrap.jobs.preInstall.image.tag=v2.2"
+            HELM_SET_FIPS_REPOSITORIES="$HELM_SET_FIPS_REPOSITORIES --set tyk-bootstrap.bootstrap.jobs.preDelete.image.tag=v2.2"
+            # Unset HELM_SET_GATEWAY_REPOSITORY because it would clash
+            HELM_SET_GATEWAY_REPOSITORY=""
             ;;
           E)
             # global environment variable file
@@ -1894,6 +1936,10 @@ if [[ $# -gt 0 ]]; then
       done
       setExtraEnvsAll TYK_LOGLEVEL $HSBX_LOG_LEVEL
       #setExtraEnvsAll GODEBUG gctrace=1
+      if [[ $HSBX_EE_GATEWAY == 'true' && $HSBX_FIPS == 'true' ]]; then
+        echo "[FATAL]Can only be EE (-e) or FIPS (-f), not both"
+        exit 1
+      fi
       if [[ -n $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE ]]; then
         if ! namespaceExists $HSBX_REMOTE_CONTROL_PLANE_NAMESPACE; then
           echo "[FATAL]Control plane namespace '$HSBX_REMOTE_CONTROL_PLANE_NAMESPACE' does not exist"
