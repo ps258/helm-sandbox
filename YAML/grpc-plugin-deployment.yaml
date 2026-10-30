@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grpc-plugin
+  labels:
+    app: grpc-plugin
+spec:
+  replicas: 1
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: grpc-plugin
+  template:
+    metadata:
+      labels:
+        app: grpc-plugin
+      annotations:
+    spec:
+      containers:
+      - image: tykio/tyk-grpc-plugin:v1.0
+        imagePullPolicy: IfNotPresent
+        name: grpc-plugin
+        securityContext:
+          runAsUser: 0
+          runAsNonRoot: false
+          allowPrivilegeEscalation: false
+          privileged: false
+          capabilities:
+            drop:
+              - ALL
+        command: ["/root/grpc-server"]
+        workingDir: /root
+        ports:
+        - containerPort: 9111
+        livenessProbe:
+          tcpSocket:
+            port: 9111
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 2
+        readinessProbe:
+          tcpSocket:
+            port: 9111
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      securityContext:
+        runAsUser: 1000
+        fsGroup: 2000
