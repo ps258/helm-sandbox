@@ -22,7 +22,7 @@ spec:
       annotations:
     spec:
       containers:
-      - image: tykio/tyk-grpc-plugin:v1.0
+      - image: mangomm/tyk-grpc-plugin:latest
         imagePullPolicy: IfNotPresent
         name: grpc-plugin
         securityContext:
@@ -33,20 +33,21 @@ spec:
           capabilities:
             drop:
               - ALL
-        command: ["/root/grpc-server"]
+        command: 
+          - "/grpc_plugin"
         workingDir: /root
         ports:
-        - containerPort: 9111
+        - containerPort: 9999
         livenessProbe:
           tcpSocket:
-            port: 9111
+            port: 9999
           initialDelaySeconds: 5
           periodSeconds: 10
           timeoutSeconds: 3
           failureThreshold: 2
         readinessProbe:
           tcpSocket:
-            port: 9111
+            port: 9999
           initialDelaySeconds: 10
           periodSeconds: 5
           timeoutSeconds: 3

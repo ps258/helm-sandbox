@@ -4,8 +4,8 @@ metadata:
   name: grpc-plugin
 spec:
   ports:
-  - port: 9111
-    targetPort: 9111
+  - port: 9999
+    targetPort: 9999
   selector:
     app: grpc-plugin
   type: NodePort

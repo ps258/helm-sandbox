@@ -107,6 +107,7 @@ NAMESPACE=''
 HSBX_DATABASE=mongo
 HSBX_DESCRIPTION='N/A'
 HSBX_GATE_USE_HTTPS=false
+HSBX_GRPC_PLUGIN=false
 HSBX_GATE_VERS=''
 # This is reset in the create) section if EE is needed
 # By default the charts use tyk-gateway-ee, so this sets it back to the non-ee version
@@ -235,6 +236,7 @@ function help {
   echo "      -e Install the Enterprise Edition (ee)"
   echo "      -f Install the FIPS edition"
   echo "      -g The number of gateway replicas to run"
+  echo "      -G Setup a grpc server to test grpc plugins"
   echo "      -h Enable https on gateways"
   echo "      -K MDCB api key"
   echo "         Used by data plane only and only when the control plane isn't a sandbox in the cluster"
@@ -798,6 +800,13 @@ function deployBastion {
 function deployHttpbin {
   echo "[INFO]Creating httbin pod to keep test traffic local"
   applyYAMLtemplate httpbin-deployment.yaml httpbin-svc-control.yaml
+}
+
+function deployGRPC {
+  echo "[INFO]Creating GRPC pod and service for GRPC plugins"
+  applyYAMLtemplate grpc-plugin-deployment.yaml grpc-plugin-svc.yaml
+  setExtraEnvsGateway TYK_GW_COPROCESSOPTIONS_COPROCESSGRPCSERVER tcp://grpc-plugin.$NAMESPACE:9999
+  setExtraEnvsGateway TYK_GW_COPROCESSOPTIONS_ENABLECOPROCESS true
 }
 
 # spawn a shell in a pod
@@ -1789,7 +1798,7 @@ if [[ $# -gt 0 ]]; then
   case $1 in
     create)
       shift
-      while getopts :C:D:d:eE:fg:H:hK:M:nN:oO:PpR:r:SsT:t:V:v: arg; do
+      while getopts :C:D:d:eE:fg:GH:hK:M:nN:oO:PpR:r:SsT:t:V:v: arg; do
         case $arg in
           C)
             # this is the chart to deploy. Defaults to tyk-stack
@@ -1841,6 +1850,10 @@ if [[ $# -gt 0 ]]; then
             # the number of gateways to deploy has the same function for charts: tyk-stack, tyk-control-plane and tyk-data-plane
             # defaults to one
             HELM_SET_TYK_GATEWAY_REPLICACOUNT="--set tyk-gateway.gateway.replicaCount=$OPTARG"
+            ;;
+          G)
+            # apply the YAML for GRPC plugin server and service
+            HSBX_GRPC_PLUGIN=true
             ;;
           h)
             HSBX_GATE_USE_HTTPS=true
@@ -2010,8 +2023,14 @@ if [[ $# -gt 0 ]]; then
         setExtraEnvsDashboard TYK_DB_SECURITY_CSRFALLOWMISSINGORIGIN true
         # setup redis and save the passwords
         deployRedis
+        # deploy a general purpose container with useful tools for debugging
         deployBastion
+        # deploy httpbin to keep test traffic local
         deployHttpbin
+        # deploy a grpc server (if HSBX_GRPC_PLUGIN=true)
+        if [[ $HSBX_GRPC_PLUGIN == 'true' ]]; then
+          deployGRPC
+        fi
         if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
           # setup the secrets that are needed to bootstrap a tyk stack
           setupControlPlaneBootstrapSecrets
