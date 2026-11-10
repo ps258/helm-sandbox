@@ -1425,7 +1425,7 @@ function setupK3s {
     KUBECONFIG=''
     export KUBECONFIG
     echo "[INFO]Installing and configuring k3s"
-    curl -sfL https://get.k3s.io | sh -s - --disable traefik
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.36.5+k3s1 sh -s - --disable traefik
   fi
   if [[ ! -d $HOME/.kube ]]; then
     mkdir ~/.kube
