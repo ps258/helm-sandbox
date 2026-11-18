@@ -876,6 +876,7 @@ function deployPostgres {
       --set primary.persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
       --set primary.resourcesPreset=none \
       --set readReplicas.persistence.size=${HSBX_MAIN_DB_SIZE}Gi \
+      --set primary.containerSecurityContext.appArmorProfile.type=Unconfined \
       $HELM_SET_POSTGRES_VERSION \
       --set primary.service.type=NodePort > /dev/null
     # save the helm options for when installing Tyk
