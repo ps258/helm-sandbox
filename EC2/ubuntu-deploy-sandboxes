@@ -5,6 +5,12 @@ PATH=$HOME/bin:$HOME/code/tyk-sandbox:$HOME/code/k8s-sandbox:$HOME/code/helm-san
 # This script is run by aws-setup on the EC2 host and gets it ready to run sandboxes
 # It's called twice. The second time is after docker is setup and $USER is added to the docker groups
 
+if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) Q= "Amazon EC2" ]]; then
+  echo "Do not run this script directly, it is called by the aws-setup script when needed"
+  echo "Instead run ./aws-setup <aws EC2 instance hostname>"
+  exit 1
+fi
+
 if [[ ! -d code ]]; then
   # create subdir and clone repos
   mkdir code
@@ -37,7 +43,7 @@ if [[ ! -d code ]]; then
   echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
   sudo apt-get -y update
   sudo apt-get install -y mongodb-mongosh
-  sudo apt install postgresql-client-common postgresql-client
+  sudo apt install -y postgresql-client-common postgresql-client
 
   # install yq and minikube
   if [[ $(uname -m) == 'x86_64' ]]; then
