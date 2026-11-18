@@ -203,6 +203,11 @@ HSBX_REMOTE_CONTROL_PLANE_API_KEY=''
 HSBX_REMOTE_CONTROL_PLANE_RPC_KEY=''
 HSBX_REMOTE_CONTROL_PLANE_NAMESPACE=''
 HSBX_REMOTE_CONTROL_PLANE_USE_SSL=false
+# 'setup monitoring' versions. Can be overridden in the environment or $ENVFILE
+# kube-prometheus-stack chart version (the one tyk-install tests its dashboards with)
+: ${HSBX_KPS_VERSION:=92.0.0}
+# git ref of TykTechnologies/tyk-install to take the Tyk Grafana dashboards from
+: ${HSBX_TYK_OBSERVABILITY_REF:=main}
 
 #REDIS_BITNAMI_CHART_VERSION="--version 19.0.2"
 #MONGO_BITNAMI_CHART_VERSION="--version 15.1.3"
@@ -284,6 +289,10 @@ function help {
   echo "$name setup operator"
   echo "      operator: install the latest version of operator ready for contexts in sandbox namespaces"
   echo "      To install another verions of operator set and export HSBX_OPERATOR_VERSION before invoking the command"
+  echo "$name setup monitoring"
+  echo "      monitoring: install Prometheus and Grafana (kube-prometheus-stack) in the namespace 'monitoring'"
+  echo "      with the Kubernetes and Tyk dashboards and report the Grafana URL. Rerun to upgrade or get the URL"
+  echo "      Set HSBX_KPS_VERSION (default $HSBX_KPS_VERSION) and HSBX_TYK_OBSERVABILITY_REF (default $HSBX_TYK_OBSERVABILITY_REF) to change versions"
   echo "$name shell <sandbox namespace...> <pod part name>"
   echo "      Spawns a shell into the pod. Mostly they are now distroless but the bastion can be used"
   echo "$name start start minikube and all namespaces"
@@ -1542,6 +1551,63 @@ function setupHelmAndOperator {
   fi
 }
 
+# Install Prometheus and Grafana (kube-prometheus-stack) into the 'monitoring' namespace and load the
+# Tyk Grafana dashboards from https://github.com/TykTechnologies/tyk-install/tree/main/observability
+# Safe to rerun: it upgrades the release, refreshes the dashboards and reports the Grafana URL
+function setupMonitoring {
+  typeset monitoringNS=monitoring
+  typeset release=monitoring
+  typeset chartVersion
+  typeset dashboardDir
+  typeset dashboard
+  typeset name
+  typeset grafanaPort
+  if [[ -n $HSBX_KPS_VERSION ]]; then
+    chartVersion="--version $HSBX_KPS_VERSION"
+  fi
+  if ! helm repo list | grep -wq prometheus-community; then
+    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+  fi
+  helm repo update prometheus-community
+  if ! namespaceExists $monitoringNS; then
+    kubectl create namespace $monitoringNS
+  fi
+  # Grafana admin credentials are the same as the Tyk dashboard admin
+  kubectl create secret generic grafana-admin -n $monitoringNS \
+    --from-literal=admin-user="$ADMIN_EMAIL" \
+    --from-literal=admin-password="$ADMIN_PASSWORD" \
+    --dry-run=client -o yaml | kubectl apply -f - > /dev/null
+  echo "[INFO]Deploying Prometheus and Grafana into namespace $monitoringNS. This may take a while"
+  if ! helm upgrade $release prometheus-community/kube-prometheus-stack -n $monitoringNS $chartVersion \
+    --install --wait --timeout 10m \
+    --values "$SCRIPTDIR/etc/kube-prometheus-stack-values.yaml" > /dev/null; then
+    echo "[FATAL]Unable to deploy kube-prometheus-stack"
+    exit 1
+  fi
+  # load the Tyk dashboards as ConfigMaps for the Grafana sidecar. They go in the folder 'Tyk'
+  dashboardDir=$(mktemp -d)
+  echo "[INFO]Loading Tyk Grafana dashboards from TykTechnologies/tyk-install@$HSBX_TYK_OBSERVABILITY_REF"
+  for dashboard in $(curl -sfL "https://api.github.com/repos/TykTechnologies/tyk-install/contents/observability/dashboards?ref=$HSBX_TYK_OBSERVABILITY_REF" | \
+      jq -r '.[] | select(.name | endswith(".json")) | .name'); do
+    name=${dashboard%.json}
+    if curl -sfL -o "$dashboardDir/$dashboard" \
+        "https://raw.githubusercontent.com/TykTechnologies/tyk-install/$HSBX_TYK_OBSERVABILITY_REF/observability/dashboards/$dashboard"; then
+      # server side apply is needed because some dashboards are too big for the last-applied annotation
+      kubectl create configmap grafana-dashboard-$name -n $monitoringNS --from-file="$dashboard=$dashboardDir/$dashboard" --dry-run=client -o yaml | \
+        kubectl label --local -f - grafana_dashboard=1 -o yaml | \
+        kubectl annotate --local -f - grafana_folder=Tyk -o yaml | \
+        kubectl apply --server-side --force-conflicts -f - > /dev/null && echo "   $name"
+    else
+      echo "[WARN]Unable to download dashboard $dashboard"
+    fi
+  done
+  rm -rf "$dashboardDir"
+  grafanaPort=$(kubectl get svc $release-grafana -n $monitoringNS -o jsonpath='{.spec.ports[0].nodePort}')
+  echo "[INFO]Grafana: http://$IP:$grafanaPort/ login as $ADMIN_EMAIL with the Tyk dashboard admin password"
+  echo "[INFO]Pod CPU and memory: Dashboards > 'Kubernetes / Compute Resources / Namespace (Pods)'"
+  echo "[INFO]The Tyk dashboards (folder 'Tyk') need the Tyk components to export OpenTelemetry metrics"
+}
+
 # report the tyk versions saved in the namespace configmap sandbox-details when it was created
 function showTykVersions {
   typeset key; typeset value; typeset report; typeset sandboxDetails; typeset description
@@ -2387,7 +2453,7 @@ if [[ $# -gt 0 ]]; then
     setup)
       shift
       if [[ $# -lt 1 ]]; then
-        echo "Must provide option: 'operator' or 'istio'"
+        echo "Must provide option: 'operator' or 'monitoring'"
         exit 1
       fi
       case $1 in
@@ -2399,8 +2465,11 @@ if [[ $# -gt 0 ]]; then
           fi
           setupHelmAndOperator
           ;;
+        monitoring)
+          setupMonitoring
+          ;;
         *)
-          echo "Unsupported option: '$1'. Only 'operator' is supported"
+          echo "Unsupported option: '$1'. Only 'operator' and 'monitoring' are supported"
           ;;
       esac
       ;;

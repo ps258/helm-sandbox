@@ -70,6 +70,10 @@ hsbctl monitor <sandbox namespace> <pod name>
 hsbctl setup operator
       operator: install the latest version of operator ready for contexts in sandbox namespaces
       To install another verions of operator set and export HSBX_OPERATOR_VERSION before invoking the command
+hsbctl setup monitoring
+      monitoring: install Prometheus and Grafana (kube-prometheus-stack) in the namespace 'monitoring'
+      with the Kubernetes and Tyk dashboards and report the Grafana URL. Rerun to upgrade or get the URL
+      Set HSBX_KPS_VERSION (default 92.0.0) and HSBX_TYK_OBSERVABILITY_REF (default main) to change versions
 hsbctl shell <sandbox namespace...> <pod part name>
       Spawns a shell into the pod. Mostly they are now distroless but the bastion can be used
 hsbctl start start minikube and all namespaces

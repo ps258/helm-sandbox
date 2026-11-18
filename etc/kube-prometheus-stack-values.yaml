@@ -1,0 +1,51 @@
+# Values for prometheus-community/kube-prometheus-stack used by 'hsbctl setup monitoring'
+# Based on https://github.com/TykTechnologies/tyk-install/blob/main/kubernetes/observability/values-kube-prometheus-stack.yaml
+# but keeps the cluster metrics (kubelet/cAdvisor, kube-state-metrics, node-exporter) on so that
+# pod CPU and memory can be charted with the built-in 'Kubernetes / Compute Resources' dashboards.
+# The Grafana admin user and password come from the 'grafana-admin' secret that hsbctl creates.
+
+# k3s and minikube don't expose these control plane components in a scrapeable way.
+# Leaving them on just gives permanently 'down' targets and noisy alerts
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    retention: 7d
+    # pick up ServiceMonitors, PodMonitors and PrometheusRules from any namespace, not just this release
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+grafana:
+  # Grafana 13 is needed for the Tyk 'Environments Overview' dashboard (v2 dashboard format)
+  image:
+    tag: 13.2.4
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  service:
+    type: NodePort
+  grafana.ini:
+    analytics:
+      reporting_enabled: false
+  # keep the Kubernetes dashboards for pod CPU and memory
+  defaultDashboardsEnabled: true
+  sidecar:
+    dashboards:
+      # ConfigMaps labelled grafana_dashboard=1 go in the folder named by the grafana_folder annotation
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+    datasources:
+      # the Tyk dashboards expect this datasource UID
+      uid: tyk-prometheus
