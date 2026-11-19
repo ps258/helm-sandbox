@@ -21,8 +21,13 @@ $ hsbctl
          tyk-control-plane
          tyk-data-plane
       -D The size of the allocated Mongo or PG storage in Gi (default: 5Gi)
+      -d Log level for all components. One of debug, info, warning or error (default: debug)
       -E A file to read environment variables from and add them all deployments
+      -e Install the Enterprise Edition (ee)
+      -f Install the FIPS edition
       -g The number of gateway replicas to run
+      -G Setup a grpc server to test grpc plugins
+      -H The version of the tyk helm chart to use (default: the latest)
       -h Enable https on gateways
       -K MDCB api key
          Used by data plane only and only when the control plane isn't a sandbox in the cluster
@@ -33,12 +38,12 @@ $ hsbctl
       -N Use the given namespace name rather than the next available sandbox
          Useful when there's a need to import apis and policy YAML with set namespace
       -n Don't publish sample APIs
-      -o Create OperatorContext for Tyk Operator
       -O MDCB rpc_key (orgid)
          Used by data plane only and only when the control plane isn't a sandbox in the cluster
          Incompatible with -R
-      -p Deploy with postgres not mongo
+      -o Create OperatorContext for Tyk Operator
       -P Deploy with EDP. (Implies -p)
+      -p Deploy with postgres not mongo
       -R The remote control plane sandbox to use for a data plane deployment.
          Implies -C tyk-data-plane
       -r The size of the allocated redis control or data plane storage in Gi (default: 1Gi)
@@ -67,6 +72,9 @@ hsbctl modify <sandbox namespace> <deployment name> [-c count] [-v version]
          so make sure it's right
 hsbctl monitor <sandbox namespace> <pod name>
       Print CPU and memory usage for the containers in the pod every 60s seconds
+hsbctl publish <sandbox namespace> <API file...>
+      Publish API definitions (Tyk OAS, OAS or classic, JSON or YAML) to the sandbox dashboard
+      Only for tyk-stack and tyk-control-plane sandboxes
 hsbctl setup operator
       operator: install the latest version of operator ready for contexts in sandbox namespaces
       To install another verions of operator set and export HSBX_OPERATOR_VERSION before invoking the command
