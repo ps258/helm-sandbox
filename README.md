@@ -58,7 +58,7 @@ $ hsbctl
       -v Version tag. The file /home/pstubbs/code/helm-sandbox/tyk-versions.list contains the versions of each product used
 hsbctl delete <sandbox namespace...>
       Delete the sandbox namespace given as a tag and all resources in it
-hsbctl get <sandbox namespace...> [chart|description|dashboard|gateway|redis|redis-password|redis-port|release|key|mdcb|mongo|postgres|orgid|values]
+hsbctl get <sandbox namespace...> [chart|description|dashboard|gateway|grafana|redis|redis-password|redis-port|release|key|mdcb|mongo|postgres|orgid|values]
       Print the requested detail in a way that's useful in another script
 hsbctl init setup minikube ready to run sandboxes
 hsbctl info <sandbox namespace...>
