@@ -1592,18 +1592,16 @@ function setupMonitoring {
   echo "[INFO]Deploying Prometheus and Grafana into namespace $monitoringNS. This may take a while"
   if ! helm upgrade $release prometheus-community/kube-prometheus-stack -n $monitoringNS $chartVersion \
     --install --wait --timeout 10m \
-    --values "$SCRIPTDIR/etc/kube-prometheus-stack-values.yaml" > /dev/null; then
+      --values "$SCRIPTDIR/etc/kube-prometheus-stack-values.yaml" > /dev/null; then
     echo "[FATAL]Unable to deploy kube-prometheus-stack"
     exit 1
   fi
   # load the Tyk dashboards as ConfigMaps for the Grafana sidecar. They go in the folder 'Tyk'
   dashboardDir=$(mktemp -d)
   echo "[INFO]Loading Tyk Grafana dashboards from TykTechnologies/tyk-install@$HSBX_TYK_OBSERVABILITY_REF"
-  for dashboard in $(curl -sfL "https://api.github.com/repos/TykTechnologies/tyk-install/contents/observability/dashboards?ref=$HSBX_TYK_OBSERVABILITY_REF" | \
-      jq -r '.[] | select(.name | endswith(".json")) | .name'); do
+  for dashboard in $(curl -sfL "https://api.github.com/repos/TykTechnologies/tyk-install/contents/observability/dashboards?ref=$HSBX_TYK_OBSERVABILITY_REF" | jq -r '.[] | select(.name | endswith(".json")) | .name'); do
     name=${dashboard%.json}
-    if curl -sfL -o "$dashboardDir/$dashboard" \
-        "https://raw.githubusercontent.com/TykTechnologies/tyk-install/$HSBX_TYK_OBSERVABILITY_REF/observability/dashboards/$dashboard"; then
+    if curl -sfL -o "$dashboardDir/$dashboard" "https://raw.githubusercontent.com/TykTechnologies/tyk-install/$HSBX_TYK_OBSERVABILITY_REF/observability/dashboards/$dashboard"; then
       # server side apply is needed because some dashboards are too big for the last-applied annotation
       kubectl create configmap grafana-dashboard-$name -n $monitoringNS --from-file="$dashboard=$dashboardDir/$dashboard" --dry-run=client -o yaml | \
         kubectl label --local -f - grafana_dashboard=1 -o yaml | \
@@ -1659,9 +1657,9 @@ function reportMonitoringInfo {
     if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
       isEC2=True
     fi
-    echo "Grafana:         http://$IP:$grafana_port=/"
+    echo "Grafana:         http://$IP:$grafana_port/"
     if [[ -n $isEC2 ]]; then
-      echo "Grafana:            http://localhost:$grafana_port=/"
+      echo "Grafana:            http://localhost:$grafana_port/"
       echo "ssh:                ssh -g $ssh_grafana <aws hostname>"
     fi
   else
@@ -2208,8 +2206,14 @@ if [[ $# -gt 0 ]]; then
     get)
       shift
       NAMESPACE=$(getNamespaceNames $1)
-      HELM_RELEASE_NAME=$(getHelmRelease)
-      HSBX_CHART=$(getHelmChart)
+      if ! namespaceExists $NAMESPACE; then
+        echo "[FATAL]Namespace $NAMESPACE not found"
+        exit 1
+      fi
+      if [[ $NAMESPACE != "monitoring" ]]; then
+        HELM_RELEASE_NAME=$(getHelmRelease)
+        HSBX_CHART=$(getHelmChart)
+      fi
       shift
       case $1 in
         [Cc]hart)
@@ -2221,8 +2225,16 @@ if [[ $# -gt 0 ]]; then
         [Dd]ash*)
           echo "http://$IP:$(getDashboardPort)/"
           ;;
-        [Gg]ateway)
+        [Gg]ate*)
           echo "$(getGatewayProtocol)://$IP:$(getGatewayPort)/"
+          ;;
+        [Gg]raf*)
+          if namespaceExists monitoring; then
+            echo "http://$IP:$(getGrafanaPort)/"
+          else
+            echo "[FATAL]Monitoring is not configured"
+            exit 1
+          fi
           ;;
         *[kK]ey|[Aa]dmin*)
           if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
@@ -2326,10 +2338,10 @@ if [[ $# -gt 0 ]]; then
           showTykVersions
           listPods
           reportSanboxInfo
-          echo
         else
           echo "[WARN]Namespace '$NAMESPACE' not found"
         fi
+        echo
       done
       ;;
     init)
