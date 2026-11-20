@@ -274,7 +274,7 @@ function help {
   echo "      -v Version tag. The file $VERSIONFILE contains the versions of each product used"
   echo "$name delete <sandbox namespace...>"
   echo "      Delete the sandbox namespace given as a tag and all resources in it"
-  echo "$name get <sandbox namespace...> [chart|description|dashboard|gateway|redis|redis-password|redis-port|release|key|mdcb|mongo|postgres|orgid|values]"
+  echo "$name get <sandbox namespace...> [chart|description|dashboard|gateway|grafana|redis|redis-password|redis-port|release|key|mdcb|mongo|postgres|orgid|values]"
   echo "      Print the requested detail in a way that's useful in another script"
   echo "$name init setup minikube ready to run sandboxes"
   echo "$name info <sandbox namespace...>"
