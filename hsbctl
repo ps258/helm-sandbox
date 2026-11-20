@@ -1277,6 +1277,12 @@ function getControlPlaneDashboardPort {
   kubectl get svc -n $NAMESPACE dashboard-svc-$HELM_TYKCONTROLPLANE_RELEASE_NAME-tyk-dashboard --no-headers=true | awk -F '[:/ ]+' '{print $6}'
 }
 
+function getGrafanaPort {
+  if namespaceExists monitoring; then
+    kubectl get svc monitoring-grafana --no-headers=true -n monitoring | awk -F '[:/ ]+' '{print $6}'
+  fi
+}
+
 function getDashboardPort {
   kubectl get svc -n $NAMESPACE dashboard-svc-$HELM_RELEASE_NAME-tyk-dashboard --no-headers=true | awk -F '[:/ ]+' '{print $6}'
 }
@@ -1640,6 +1646,26 @@ function showLogs {
   else
     echo "[FATAL]'$podPartName' not found in namespace $NAMESPACE"
     kubectl get pods -n $NAMESPACE
+  fi
+}
+
+function reportMonitoringInfo {
+  typeset grafana_port; typeset ssh_grafana
+  typeset isEC2
+  if namespaceExists monitoring; then
+    echo "[INFO]Grafana monitoring is configured"
+    grafana_port=$(getGrafanaPort)
+    ssh_grafana="-L $grafana_port:$IP:$grafana_port"
+    if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) == "Amazon EC2" ]]; then
+      isEC2=True
+    fi
+    echo "Grafana:         http://$IP:$grafana_port=/"
+    if [[ -n $isEC2 ]]; then
+      echo "Grafana:            http://localhost:$grafana_port=/"
+      echo "ssh:                ssh -g $ssh_grafana <aws hostname>"
+    fi
+  else
+    echo "[WARN]Grafana monitoring is NOT configured"
   fi
 }
 
@@ -2291,7 +2317,9 @@ if [[ $# -gt 0 ]]; then
         set $allSandboxes
       fi
       for NAMESPACE in $(getNamespaceNames $*); do
-        if namespaceExists $NAMESPACE; then
+        if [[ $NAMESPACE == "monitoring" ]]; then
+          reportMonitoringInfo
+        elif namespaceExists $NAMESPACE; then
           # set HSBX_DATABASE for this namespace
           getDatabaseType
           echo "[INFO]$NAMESPACE"
