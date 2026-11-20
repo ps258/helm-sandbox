@@ -5,7 +5,7 @@ PATH=$HOME/bin:$HOME/code/tyk-sandbox:$HOME/code/k8s-sandbox:$HOME/code/helm-san
 # This script is run by aws-setup on the EC2 host and gets it ready to run sandboxes
 # It's called twice. The second time is after docker is setup and $USER is added to the docker groups
 
-if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) Q= "Amazon EC2" ]]; then
+if [[ $(cat /sys/devices/virtual/dmi/id/board_vendor) != "Amazon EC2" ]]; then
   echo "Do not run this script directly, it is called by the aws-setup script when needed"
   echo "Instead run ./aws-setup <aws EC2 instance hostname>"
   exit 1
