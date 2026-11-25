@@ -111,7 +111,7 @@ It also mounts `~/.tyk/pulgins` and runs a simple python web server so that bund
 
 Shell access to the bastion can be obtained like this
 ```
-$ hsbctl shell <hsanbox namespace name> shell
+$ hsbctl shell <hsanbox namespace name> bastion
 ```
 The `<hsanbox namespace name>` can be the full name like `hsandbox-1` or just the number `1`
 
