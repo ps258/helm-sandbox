@@ -55,7 +55,7 @@ $ hsbctl
          comma saparated list like 'newyork,london'
       -t Description of the sandbox namespace
       -V values.yaml file to use instead of other options. Note this overrides all other Tyk options
-      -v Version tag. The file /home/pstubbs/code/helm-sandbox/tyk-versions.list contains the versions of each product used
+      -v Version tag. The file ~/code/helm-sandbox/tyk-versions.list contains the versions of each product used
 hsbctl delete <sandbox namespace...>
       Delete the sandbox namespace given as a tag and all resources in it
 hsbctl get <sandbox namespace...> [chart|description|dashboard|gateway|grafana|redis|redis-password|redis-port|release|key|mdcb|mongo|postgres|orgid|values]
@@ -88,6 +88,19 @@ hsbctl start start minikube and all namespaces
 hsbctl version <sandbox namespace...>
       Shows the image version in each deployment in the namespace
 ```
+
+### AI coding agents
+Two files help AI coding agents such as Claude Code or Codex. They split the job in two: one is
+for changing the repo, the other for using `hsbctl`.
+
+- **`AGENTS.md`** is for agents that **change the repo**. It covers how `create` and the other
+  subcommands fit together, the coding conventions, how to check changes, safety rules and
+  known issues. Many agent tools read `AGENTS.md` automatically. For Claude Code, `CLAUDE.md`
+  imports it.
+- **`skills/SKILL.md`** is a Claude Code skill for **using** `hsbctl`. It covers creating and
+  deleting sandboxes, getting URLs and keys, publishing APIs, loading plugins and monitoring.
+  Claude Code doesn't load it from the repo automatically. Install it for your user with
+  `mkdir -p ~/.claude/skills/hsbctl && cp skills/SKILL.md ~/.claude/skills/hsbctl/`.
 
 ### The config file
 When the file `~/.tyk-sandbox` is present it is sourced by `hsbctl` during startup. This file provides environment variables that affect the behaviour of `hsbctl`
