@@ -2162,11 +2162,6 @@ if [[ $# -gt 0 ]]; then
           else
             HELM_TYK_DEVPORTAL_ENABLED=false
           fi
-          if [[ $HSBX_ENABLE_SYNCHRONIZER == 'true' ]]; then
-            if [[ $HSBX_CHART == 'tyk-data-plane' || $HSBX_CHART == 'tyk-control-plane' ]]; then
-              HELM_SET_SYNCHRONIZER='--set global.mdcbSynchronizer.enabled=true'
-            fi
-          fi
           # setup table sharding
           if [[ $HSBX_DATABASE == 'postgres' ]]; then
             setExtraEnvsPump TYK_PMP_PUMPS_SQLAGGREGATE_META_TABLESHARDING true
@@ -2179,6 +2174,15 @@ if [[ $# -gt 0 ]]; then
             setupRemoteControlPlaneSecrets
             setupDataPlaneSecret
             saveControlPlaneName
+        fi
+        # the synchroniser applies to both sides of MDCB: the control plane (MDCB sync worker)
+        # and the data plane (gateway slave options)
+        if [[ $HSBX_ENABLE_SYNCHRONIZER == 'true' ]]; then
+          if [[ $HSBX_CHART == 'tyk-data-plane' || $HSBX_CHART == 'tyk-control-plane' ]]; then
+            HELM_SET_SYNCHRONIZER='--set global.mdcbSynchronizer.enabled=true'
+          else
+            echo "[WARN]-s is only valid with tyk-control-plane and tyk-data-plane. Ignoring it"
+          fi
         fi
         runHelm
         if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
@@ -2241,7 +2245,8 @@ if [[ $# -gt 0 ]]; then
             echo $(getAdminUserKey)
           else
             # FIXME this should find the gateway secret
-            echo "[FATAL]Install is of type $HSBX_CHART: No admin key"
+            echo "[FATAL]Install is of type $HSBX_CHART: No admin key" 1>&2
+            exit 1
           fi
           ;;
         MDCB*|mdcb*|sink*)
