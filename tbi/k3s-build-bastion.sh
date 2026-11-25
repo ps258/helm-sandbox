@@ -20,3 +20,8 @@ else
   docker save $TAG | sudo k3s ctr images import -
   echo "[INFO]Image $TAG is now available in k3s"
 fi
+
+# Pin the image so kubelet's image garbage collection never removes it when
+# no pod is using it (it is local-only and cannot be re-pulled from a registry)
+sudo k3s ctr -n k8s.io images label docker.io/$TAG io.cri-containerd.pinned=pinned >/dev/null
+echo "[INFO]Image $TAG is pinned in k3s"
