@@ -68,7 +68,7 @@ Consequences:
   with `exit 1`**, never to stdout.
 - When a subcommand or option changes, keep four things in step:
   - `help()` in `hsbctl`.
-  - The copy of the help text in `README.md`, which is pasted verbatim.
+  - The command reference in `README.md` (no longer a verbatim copy of the help text).
   - `skills/SKILL.md`.
   - The installed skill: copy `skills/SKILL.md` to `~/.claude/skills/hsbctl/SKILL.md`.
 - `tyk-versions.list`:
