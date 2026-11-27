@@ -374,7 +374,7 @@ hsbctl create -v <refNo> -t "<description>" [options]
 | `-t <text>` | Description, shown by `info`. Always set it |
 | `-C <chart>` | `tyk-stack` (default), `tyk-control-plane` or `tyk-data-plane` |
 | `-p` | PostgreSQL instead of MongoDB (refNo 4 or later) |
-| `-P` | Also deploy the Enterprise Developer Portal. Implies `-p` |
+| `-P` | Also deploy the Enterprise Developer Portal, with the sandbox dashboard registered as its `tyk-pro` provider. Implies `-p` |
 | `-e` | EE gateway image (`tykio/tyk-gateway-ee`) |
 | `-f` | FIPS images for every component. Can't be combined with `-e` |
 | `-g <n>` | Number of gateway replicas |
@@ -421,6 +421,8 @@ hsbctl get <sandbox> <item>
 | `grafana` | Grafana URL (any existing namespace works as `<sandbox>`, e.g. `get monitoring grafana`) |
 | `key` (or `admin`) | Dashboard admin user's API key |
 | `orgid` | Org ID |
+| `portal` | Developer portal URL (sandboxes created with `-P`) |
+| `portal-token` | Developer portal admin's API token, for the portal admin API (`/portal-api`) |
 | `mdcb` | MDCB `host:port` (control plane only) |
 | `redis` | A `REDISCLI_AUTH=... redis-cli -h ... -p ...` command line |
 | `redis-password`, `redis-port` | Those values alone |
@@ -610,6 +612,20 @@ hsbctl info N            # shows the portal URL
 
 The portal's admin user details are in the secret `secrets-tykstack-tyk-dev-portal`
 (`adminUserEmail`, `adminUserPassword`).
+
+`create` also registers the sandbox's dashboard in the portal as a `tyk-pro` provider named
+`Tyk Dashboard`, using the in-cluster dashboard and gateway URLs, the dashboard admin's API key and
+the org ID, so its policies are synchronised straight away. The portal admin's API token (printed
+by the chart's `dev-portal-job-*` bootstrap job) is kept in `sandbox-details` and drives the portal
+admin API:
+
+```sh
+TOKEN=$(hsbctl get N portal-token); PORTAL=$(hsbctl get N portal)
+curl -s -H "Authorization: $TOKEN" ${PORTAL}portal-api/providers | jq
+```
+
+If the provider step fails, `create` prints a `[WARN]` and carries on; add the provider in the
+portal UI (**Settings > Providers**) instead.
 
 ### Manage APIs with Tyk Operator
 

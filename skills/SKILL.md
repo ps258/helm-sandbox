@@ -65,7 +65,7 @@ sandbox later in `info`.
 |---|---|
 | `-C tyk-stack\|tyk-control-plane\|tyk-data-plane` | chart (default `tyk-stack`) |
 | `-p` | Postgres instead of Mongo (version ≥ 4) |
-| `-P` | also deploy Enterprise Developer Portal (implies `-p`) |
+| `-P` | also deploy Enterprise Developer Portal (implies `-p`), with the sandbox dashboard registered as its `tyk-pro` provider |
 | `-e` / `-f` | EE gateway image / FIPS images for all components (mutually exclusive) |
 | `-g N` | gateway replicas |
 | `-h` | HTTPS on gateways |
@@ -114,9 +114,11 @@ pasting anywhere shared.
 
 ### get — single values for scripting
 ```
-hsbctl get <ns> chart|description|dashboard|gateway|grafana|key|orgid|mdcb|mongo|postgres|redis|redis-password|redis-port|release|values
+hsbctl get <ns> chart|description|dashboard|gateway|grafana|key|orgid|mdcb|mongo|portal|portal-token|postgres|redis|redis-password|redis-port|release|values
 ```
-`grafana` prints `http://<ip>:<nodeport>/` for the cluster-wide Grafana. Any existing namespace
+`portal` prints the portal URL and `portal-token` the portal admin's API token for
+`/portal-api` calls (`-P` sandboxes; the token is read from the chart's `dev-portal-job-*` log at
+create time and kept in `sandbox-details`). `grafana` prints `http://<ip>:<nodeport>/` for the cluster-wide Grafana. Any existing namespace
 works as `<ns>`, e.g. `hsbctl get monitoring grafana`. It exits 1 if `setup monitoring` hasn't
 been run. `admin` is an alias for `key`.
 Examples:

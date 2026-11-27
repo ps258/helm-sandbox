@@ -258,7 +258,7 @@ function help {
   echo "         Used by data plane only and only when the control plane isn't a sandbox in the cluster"
   echo "         Incompatible with -R"
   echo "      -o Create OperatorContext for Tyk Operator"
-  echo "      -P Deploy with EDP. (Implies -p)"
+  echo "      -P Deploy with EDP and register the dashboard as its provider. (Implies -p)"
   echo "      -p Deploy with postgres not mongo"
   echo "      -R The remote control plane sandbox to use for a data plane deployment."
   echo "         Implies -C tyk-data-plane"
@@ -274,7 +274,7 @@ function help {
   echo "      -v Version tag. The file $VERSIONFILE contains the versions of each product used"
   echo "$name delete <sandbox namespace...>"
   echo "      Delete the sandbox namespace given as a tag and all resources in it"
-  echo "$name get <sandbox namespace...> [chart|description|dashboard|gateway|grafana|redis|redis-password|redis-port|release|key|mdcb|mongo|postgres|orgid|values]"
+  echo "$name get <sandbox namespace...> [chart|description|dashboard|gateway|grafana|redis|redis-password|redis-port|release|key|mdcb|mongo|postgres|orgid|portal|portal-token|values]"
   echo "      Print the requested detail in a way that's useful in another script"
   echo "$name init setup minikube ready to run sandboxes"
   echo "$name info <sandbox namespace...>"
@@ -993,6 +993,65 @@ function saveOrgAndAdminKey {
   orgID=$(echo get $adminRedisKey | REDISCLI_AUTH=$redisPassword redis-cli --raw -h $IP -p $redisPort | jq -r .UserData.org_id)
   kubectl get configmap sandbox-details -n $NAMESPACE -o yaml | yq '.data.HSBX_ADMIN_KEY = "'$adminAccessKey'"' | kubectl apply -f -
   kubectl get configmap sandbox-details -n $NAMESPACE -o yaml | yq '.data.HSBX_ORGID = "'$orgID'"' | kubectl apply -f -
+}
+
+# Register the sandbox's dashboard as a tyk-pro provider in the Enterprise Developer Portal.
+# The chart's dev-portal job bootstraps the portal admin and prints the admin's API token in its
+# log; that token is kept in 'sandbox-details' as HSBX_PORTAL_TOKEN and used for the admin API.
+# The portal synchronises a new provider when it is saved, so no separate sync call is needed.
+function configurePortalProvider {
+  typeset job="dev-portal-job-$HELM_RELEASE_NAME-tyk-dev-portal"
+  typeset portalAPI
+  typeset dashboardURL="http://dashboard-svc-$HELM_RELEASE_NAME-tyk-dashboard.$NAMESPACE.svc:3000"
+  typeset gatewayURL="$(getGatewayProtocol)://gateway-svc-$HELM_RELEASE_NAME-tyk-gateway.$NAMESPACE.svc:8080"
+  typeset token
+  typeset metaData
+  typeset response
+  typeset providerID
+  typeset try
+
+  echo "[INFO]Waiting for the portal bootstrap job $job"
+  if ! kubectl wait -n $NAMESPACE --for=condition=complete job/$job --timeout=600s > /dev/null; then
+    echo "[WARN]Portal bootstrap job $job did not complete. Portal provider not configured"
+    return 1
+  fi
+  token=$(kubectl logs -n $NAMESPACE job/$job | grep -o '{.*}' | jq -r '.data.api_token // empty' 2>/dev/null | head -1)
+  if [[ -z $token ]]; then
+    echo "[WARN]No API token in the log of $job. Portal provider not configured"
+    return 1
+  fi
+  kubectl get configmap sandbox-details -n $NAMESPACE -o yaml | yq '.data.HSBX_PORTAL_TOKEN = "'$token'"' | kubectl apply -f - > /dev/null
+
+  portalAPI="http://$IP:$(getPortalPort)/portal-api"
+  if curl -sf -H "Authorization: $token" $portalAPI/providers | jq -e 'length > 0' > /dev/null 2>&1; then
+    echo "[INFO]The portal already has a provider"
+    return 0
+  fi
+
+  metaData=$(jq -nc --arg url "$dashboardURL" --arg secret "$(getAdminUserKey)" --arg org "$(getOrgID)" --arg gw "$gatewayURL" \
+    '{URL: $url, Secret: $secret, OrgID: $org, Gateway: $gw, InsecureSkipVerify: true}')
+  # the portal may still be starting, or its first connection to the dashboard may fail; retry
+  for try in 1 2 3 4 5 6; do
+    response=$(jq -nc --arg meta "$metaData" '{Name: "Tyk Dashboard", Type: "tyk-pro", Configuration: {MetaData: $meta}}' |
+      curl -s -X POST -H "Authorization: $token" -H 'Content-Type: application/json' -d @- $portalAPI/providers)
+    providerID=$(echo "$response" | jq -r '.ID // empty' 2>/dev/null)
+    if [[ -n $providerID ]]; then
+      echo "[INFO]Portal provider $providerID configured for $dashboardURL"
+      return 0
+    fi
+    sleep 10
+  done
+  echo "[WARN]Portal provider not configured. Last response: $response"
+  return 1
+}
+
+function getPortalToken {
+  typeset namespace
+  namespace=$NAMESPACE
+  if [[ $# > 0 ]]; then
+    namespace="$1"
+  fi
+  kubectl get configmap sandbox-details -n $namespace -o json | jq -r '.data.HSBX_PORTAL_TOKEN // empty'
 }
 
 # save the control plane name for later retrieval
@@ -1746,6 +1805,9 @@ function reportSanboxInfo {
     fi
     echo "$NAMESPACE.AdminKey:          $(getAdminUserKey)"
     echo "$NAMESPACE.OrgID:             $(getOrgID)"
+    if [[ $HSBX_HAS_EDP != "null" ]]; then
+      echo "$NAMESPACE.PortalToken:       $(getPortalToken)"
+    fi
   elif [[ $HSBX_CHART == "tyk-gateway" ]]; then
     standalone_gateway_port=$(getGatewayPort)
     ssh_standalone_gateway="-L $standalone_gateway_port:$IP:$standalone_gateway_port"
@@ -2201,6 +2263,9 @@ if [[ $# -gt 0 ]]; then
         runHelm
         if [[ $HSBX_CHART == 'tyk-stack' || $HSBX_CHART == 'tyk-control-plane' ]]; then
           saveOrgAndAdminKey
+          if [[ $HSBX_ENABLE_DEVPORTAL == 'true' ]]; then
+            configurePortalProvider
+          fi
           if [[ $INSTALL_OPR_CONTEXT == 'true' ]]; then
             deployOperatorContext
             if [[ $PUBLISH_APIS == 'true' ]]; then
@@ -2301,6 +2366,23 @@ if [[ $# -gt 0 ]]; then
             fi
           else
             echo "[FATAL]$HSBX_CHART doesn't use mongodb" 1>&2
+            exit 1
+          fi
+          ;;
+        [Pp]ortal-token)
+          portal_token=$(getPortalToken)
+          if [[ -n $portal_token ]]; then
+            echo $portal_token
+          else
+            echo "[FATAL]No portal API token stored for $NAMESPACE" 1>&2
+            exit 1
+          fi
+          ;;
+        [Pp]ortal)
+          if [[ $(getEDPversion) != "null" ]]; then
+            echo "http://$IP:$(getPortalPort)/"
+          else
+            echo "[FATAL]$NAMESPACE has no developer portal" 1>&2
             exit 1
           fi
           ;;
